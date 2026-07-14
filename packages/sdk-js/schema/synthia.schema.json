@@ -1,0 +1,97 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://synthia.dev/schema/synthia.schema.json",
+  "title": "synthia.yaml",
+  "description": "Configuration for `synthia run` — Synthia agent evals in CI.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version", "agent"],
+  "properties": {
+    "version": { "const": 1 },
+    "agent": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["entrypoint"],
+      "properties": {
+        "entrypoint": {
+          "type": "string",
+          "description": "Path to the module exporting your RolloutAgent — (transcript, sandbox) => reply. Optional '#exportName' suffix; default picks `agent` then the default export. TS needs Node >= 22.18 or a dev install of tsx."
+        },
+        "meta": {
+          "type": "object",
+          "description": "Free-form agent identity (name, version, model) recorded on every rollout."
+        }
+      }
+    },
+    "run": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "dataset": {
+          "type": "string",
+          "pattern": "^ds_[a-z0-9]+$",
+          "description": "Dataset id to run. Strongly recommended in CI; omitted = the account's latest dataset (warned)."
+        },
+        "max_turns": { "type": "integer", "minimum": 2, "maximum": 40, "default": 12 },
+        "concurrency": { "type": "integer", "minimum": 1, "default": 4 },
+        "repeats": {
+          "type": "integer", "minimum": 1, "maximum": 5, "default": 1,
+          "description": "Run each scenario N times; pass rates pool across repeats (stochasticity tolerance)."
+        },
+        "timeout_minutes": { "type": "number", "minimum": 1, "default": 30 }
+      }
+    },
+    "thresholds": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "pass_rate": {
+          "type": "number", "minimum": 0, "maximum": 1,
+          "description": "Suite gate: fail when passed/evaluated drops below this. Required unless your organization's config sets a default. Org floors are applied with a warning."
+        },
+        "min_scenarios": {
+          "type": "integer", "minimum": 1, "default": 1,
+          "description": "Fail when fewer rollouts were evaluated — guards a vacuous pass on an empty dataset."
+        }
+      }
+    },
+    "baseline": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "branch": {
+          "type": "string", "default": "main",
+          "description": "Compare against the newest succeeded CI run on this branch (populate it by also triggering your workflow on pushes to it)."
+        },
+        "max_regression": {
+          "type": ["number", "null"], "minimum": 0, "maximum": 1, "default": null,
+          "description": "Fail when pass rate drops more than this vs the baseline; null = deltas are informational only."
+        }
+      }
+    },
+    "telemetry": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "redact": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "enabled": {
+              "type": "boolean", "default": true,
+              "description": "Scrub secret-shaped strings from replies and tool events before upload. Disabling is explicit and warned."
+            },
+            "patterns": {
+              "type": "array", "items": { "type": "string" },
+              "description": "Extra regexes to scrub, e.g. an internal token prefix."
+            }
+          }
+        }
+      }
+    },
+    "output": {
+      "type": "string", "default": "synthia-results.json",
+      "description": "Results JSON path (scores and metadata only — never transcripts)."
+    }
+  }
+}

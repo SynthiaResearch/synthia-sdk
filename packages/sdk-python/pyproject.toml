@@ -1,0 +1,37 @@
+[project]
+name = "synthiaresearch"
+version = "0.0.10"
+description = "Python SDK for the Synthia API"
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.10"
+dependencies = [
+    "httpx>=0.27",
+    "pyyaml>=6",
+]
+keywords = ["synthetic-data", "ai-agents", "agent-evaluation", "llm", "testing"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Typing :: Typed",
+]
+
+[project.scripts]
+synthia = "synthia.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/SynthiaResearch/synthia-sdk"
+Repository = "https://github.com/SynthiaResearch/synthia-sdk"
+Documentation = "https://github.com/SynthiaResearch/synthia-sdk/blob/main/docs/reference/README.md"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/synthia"]

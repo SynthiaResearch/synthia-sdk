@@ -1,0 +1,30 @@
+# synthia.yaml — Synthia evals in CI for the ci-demo-py (Python) agent.
+# Same schema as the JS example; datasets are account-scoped and
+# language-agnostic, so this reuses the JS demo's pinned dataset.
+version: 1
+
+agent:
+  entrypoint: ./agent.py            # exports `agent(transcript, sandbox)`
+  meta:
+    name: acme-support-agent-py
+
+run:
+  dataset: ds_e6d3755b0685
+  max_turns: 10
+  concurrency: 4
+  repeats: 1
+  timeout_minutes: 20
+
+thresholds:
+  pass_rate: 0.5
+  min_scenarios: 4
+
+baseline:
+  branch: main
+  max_regression: null
+
+telemetry:
+  redact:
+    enabled: true
+
+output: synthia-results.json

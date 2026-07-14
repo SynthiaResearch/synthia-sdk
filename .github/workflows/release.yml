@@ -1,0 +1,72 @@
+name: Release
+
+# Publishes both SDKs via trusted publishing (OIDC) — no registry tokens,
+# ever. Trigger: push a tag like v0.0.10 (the sync from the monorepo must
+# already carry that version in both manifests + SDK_VERSION).
+on:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  # Fails fast (before EITHER registry publishes) when the packages don't
+  # build or the four version sources disagree — a half-published release
+  # skews npm vs PyPI forever, since version numbers burn on first use.
+  verify:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Version lockstep (tag == package.json == pyproject == SDK_VERSION)
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          js="$(node -p "require('./packages/sdk-js/package.json').version")"
+          py="$(grep -m1 '^version' packages/sdk-python/pyproject.toml | cut -d'"' -f2)"
+          sdk="$(grep -m1 'SDK_VERSION = ' packages/sdk-js/src/client.ts | cut -d'"' -f2)"
+          echo "tag=$tag package.json=$js pyproject.toml=$py SDK_VERSION=$sdk"
+          if [ "$js" != "$tag" ] || [ "$py" != "$tag" ] || [ "$sdk" != "$tag" ]; then
+            echo "::error::version mismatch — bump all three in the monorepo and re-sync"
+            exit 1
+          fi
+      - run: npm install
+      - run: npm run build --workspace synthiaresearch
+      - uses: astral-sh/setup-uv@v5
+      - run: uv build
+        working-directory: packages/sdk-python
+
+  publish-npm:
+    needs: verify
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write # OIDC for npm trusted publishing
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+      - run: npm install
+      # --provenance attaches a build attestation (OIDC trusted publishing
+      # alone did not attach one on 0.0.6). It requires this repo to stay
+      # public and package.json's repository field to point at it.
+      - run: npm publish --workspace synthiaresearch --access public --provenance
+
+  publish-pypi:
+    needs: verify
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write # OIDC for PyPI trusted publishing
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - run: uv build
+        working-directory: packages/sdk-python
+      - uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: packages/sdk-python/dist

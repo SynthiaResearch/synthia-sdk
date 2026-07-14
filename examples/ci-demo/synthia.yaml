@@ -1,0 +1,31 @@
+# synthia.yaml — Synthia evals in CI for the ci-demo agent.
+# Schema: packages/sdk-js/schema/synthia.schema.json
+version: 1
+
+agent:
+  entrypoint: ./src/agent.ts        # exports `agent` (RolloutAgent)
+  meta:
+    name: acme-support-agent
+
+run:
+  # Pinned dataset (created once via scripts/bootstrap-dataset.ts) so every
+  # CI run plays the same scenarios. Re-bootstrap to refresh coverage.
+  dataset: ds_e6d3755b0685
+  max_turns: 10
+  concurrency: 4
+  repeats: 1
+  timeout_minutes: 20
+
+thresholds:
+  pass_rate: 0.5                    # tuned after the first dryruns
+  min_scenarios: 4
+
+baseline:
+  branch: main
+  max_regression: null              # informational deltas until baselines settle
+
+telemetry:
+  redact:
+    enabled: true
+
+output: synthia-results.json

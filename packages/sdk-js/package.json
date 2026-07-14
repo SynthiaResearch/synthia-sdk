@@ -1,0 +1,49 @@
+{
+  "name": "synthiaresearch",
+  "version": "0.0.10",
+  "description": "JavaScript/TypeScript SDK for the Synthia API",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/SynthiaResearch/synthia-sdk.git",
+    "directory": "packages/sdk-js"
+  },
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./ci": {
+      "types": "./dist/cli/run.d.ts",
+      "default": "./dist/cli/run.js"
+    },
+    "./adapters": {
+      "types": "./dist/adapters.d.ts",
+      "default": "./dist/adapters.js"
+    }
+  },
+  "files": [
+    "dist",
+    "schema"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "bin": {
+    "synthia": "./dist/cli.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "prepublishOnly": "npm run build"
+  },
+  "dependencies": {
+    "yaml": "^2.8.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.5.0"
+  }
+}

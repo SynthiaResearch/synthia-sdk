@@ -1,0 +1,7 @@
+{
+  "name": "synthia-sdk",
+  "private": true,
+  "workspaces": [
+    "packages/sdk-js"
+  ]
+}

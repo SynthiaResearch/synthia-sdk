@@ -1,0 +1,15 @@
+{
+  "name": "ci-demo",
+  "private": true,
+  "version": "0.0.1",
+  "description": "Toy support agent wired to synthia run — the CI integration fixture",
+  "type": "module",
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.74.0",
+    "synthiaresearch": "*"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.5.0"
+  }
+}
