@@ -55,6 +55,9 @@ on:
 permissions:
   contents: read
   pull-requests: write
+concurrency:               # cancel superseded runs — evals are metered
+  group: synthia-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 jobs:
   evals:
     name: Synthia Judge
@@ -71,6 +74,7 @@ jobs:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}   # your graph's own keys
         with:
           api-key: ${{ secrets.SYNTHIA_API_KEY }}
+          warn-only: true      # advisory while calibrating — remove to enforce the gate
 ```
 
 See [docs/ci.md](../ci.md) for the full `synthia.yaml` reference and security
