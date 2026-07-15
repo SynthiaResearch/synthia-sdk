@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import base64
 import hashlib
 import json
@@ -6,13 +8,29 @@ import random
 import sys
 import time
 import uuid
+from collections.abc import Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict, dataclass, field, fields as _dc_fields
 from importlib import metadata
 from pathlib import Path
-from typing import Callable, Union
+from typing import TYPE_CHECKING, Any, Callable, Union
 
 import httpx
+
+if TYPE_CHECKING:
+    # Server payload shapes generated from the OpenAPI contract
+    # (scripts/generate-sdk-types.sh). Typing-only: _api_types needs
+    # typing_extensions, which is not a runtime dependency. Shapes whose
+    # name is taken by a hand-written class get an Api prefix.
+    from ._api_types import (
+        DatasetRow,
+        Rollout,
+        RolloutEvaluation,
+        ScenarioValidation,
+        Seed,
+        ToolCall as ApiToolCall,
+        TranscriptTurn as ApiTranscriptTurn,
+    )
 
 DEFAULT_BASE_URL = "https://synthia-research--synthia-api-web.modal.run"
 
@@ -171,7 +189,7 @@ class ToolSandbox:
         self.events: list[dict] = []
 
     @classmethod
-    def from_config(cls, config: dict) -> "ToolSandbox":
+    def from_config(cls, config: "Mapping[str, Any]") -> "ToolSandbox":
         return cls(seed=config["seed"], fail_tools=set(config["fail_tools"]),
                    state=config["state"])
 
@@ -314,7 +332,7 @@ class ValidationRun:
             raise RuntimeError(f"validation run {self.id} failed: {self.error}")
         return self
 
-    def scenarios(self) -> list[dict]:
+    def scenarios(self) -> list[ScenarioValidation]:
         """Per-scenario judge verdicts: scenario_id, passed, judge."""
         r = self._http.get(f"/v1/validation-runs/{self.id}/scenarios")
         r.raise_for_status()
@@ -329,7 +347,7 @@ class Dataset:
     row_count: int
     _http: httpx.Client
 
-    def download(self) -> list[dict]:
+    def download(self) -> list[DatasetRow]:
         r = self._http.get(f"/v1/datasets/{self.id}/rows")
         r.raise_for_status()
         return r.json()["data"]
@@ -388,7 +406,7 @@ class Seeds:
 
     def ingest(self, *, kind: str, source: str,
                content: Union[dict, str, Path, bytes],
-               version: str = "1", metadata: dict | None = None) -> dict:
+               version: str = "1", metadata: dict | None = None) -> Seed:
         """Upload seed material (documents, tool schemas, policies, traces...).
 
         Overloaded on `content`: a dict is ingested as-is (text pipeline);
@@ -460,7 +478,7 @@ class UserModels:
         params = {"sdk_session": session} if session else {}
         r = self._http.get("/v1/user-models", params=params)
         r.raise_for_status()
-        return [UserModel(**m) for m in r.json()["data"]]
+        return [_build(UserModel, m) for m in r.json()["data"]]
 
 
 class Datasets:
@@ -477,7 +495,7 @@ class Datasets:
         params = {"sdk_session": session} if session else {}
         r = self._http.get("/v1/datasets", params=params)
         r.raise_for_status()
-        return [Dataset(**d, _http=self._http) for d in r.json()["data"]]
+        return [_build(Dataset, d, _http=self._http) for d in r.json()["data"]]
 
     def generate(self, user_model: UserModel | str, count: int = 20, *,
                  quality_check_id: str | None = None) -> GenerationJob:
@@ -540,7 +558,7 @@ class QualityCheck:
             raise RuntimeError(f"quality check {self.id} failed: {self.error}")
         return self
 
-    def rollouts(self) -> list[dict]:
+    def rollouts(self) -> list[RolloutEvaluation]:
         """Per-rollout results: rollout_id, passed, states (the agentic-state
         trajectory), and judge (dimensions + issues)."""
         r = self._http.get(f"/v1/quality-checks/{self.id}/rollouts")
@@ -618,8 +636,8 @@ class RolloutResult:
     scenario_id: str
     status: str
     turns: int
-    transcript: list[dict]
-    tool_events: list[dict]
+    transcript: "list[ApiTranscriptTurn]"
+    tool_events: "list[ApiToolCall]"
     voice_render: "VoiceRender | None" = None
 
 
@@ -630,7 +648,7 @@ class EvalOutcome:
     dataset: Dataset
     results: "list[RolloutResult]"
     quality_check: QualityCheck
-    evaluations: list[dict]         # per-rollout judge rows
+    evaluations: "list[RolloutEvaluation]"  # per-rollout judge rows
     pass_rate: float | None         # judged pass fraction; None when empty
 
 
@@ -641,7 +659,7 @@ class Rollouts:
         self._session_id = session_id
         self._voice_auto = voice_auto
 
-    def get(self, rollout_id: str) -> dict:
+    def get(self, rollout_id: str) -> Rollout:
         """A stored rollout's full captured state: status, seed, transcript,
         tool events, and sandbox."""
         r = self._http.get(f"/v1/rollouts/{rollout_id}")
@@ -733,7 +751,7 @@ class Rollouts:
         return results
 
     def quality_check(
-            self, rollouts: "list[Union[RolloutResult, str]]",
+            self, rollouts: "Sequence[Union[RolloutResult, str]]",
             label: str | None = None) -> QualityCheck:
         """Start an async quality check over finished rollouts: the server
         analyzes each rollout's agentic states in parallel and judges
@@ -747,7 +765,7 @@ class Rollouts:
         return _build(QualityCheck, r.json(), _http=self._http)
 
     def _recover_turn(self, rollout_id: str, prior_turn: int,
-                      body: dict, original: Exception) -> dict:
+                      body: dict, original: Exception) -> Rollout:
         """Recover a turn post that failed transiently (lost/timed-out
         connection or a retryable 5xx) without risking a double-advance.
         Re-fetch the rollout: if its turn count moved past `prior_turn` the
@@ -783,11 +801,11 @@ class Rollouts:
             "dataset_id": dataset_id,
         })
         r.raise_for_status()
-        session = r.json()
+        session: "Rollout" = r.json()
         while session["status"] == "running":
             sandbox = ToolSandbox.from_config(session["sandbox"])
             reply = agent(session["transcript"], sandbox)
-            body = {"tool_calls": sandbox.events}
+            body: dict[str, Any] = {"tool_calls": sandbox.events}
             audio = _as_audio_bytes(reply)
             if audio is not None:
                 # The agent replied with audio — the server transcribes it
@@ -823,7 +841,7 @@ class Rollouts:
             rollout_id=session["id"], scenario_id=scenario_id,
             status=session["status"], turns=session["turn"],
             transcript=session["transcript"],
-            tool_events=session["tool_events"])
+            tool_events=session.get("tool_events", []))
 
 
 class Synthia:

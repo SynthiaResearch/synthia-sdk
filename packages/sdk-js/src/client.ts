@@ -2,6 +2,21 @@ import { createHash, randomUUID } from "node:crypto";
 import { readFileSync, writeFileSync } from "node:fs";
 import { basename, dirname, extname, resolve } from "node:path";
 
+import type { components } from "./generated/api.js";
+
+/** Server payload shape for a schema in the OpenAPI contract. */
+type Api<K extends keyof components["schemas"]> = components["schemas"][K];
+
+// Server payload shapes, re-exported under SDK-facing names. Shapes whose
+// name is taken by a hand-written interface (the local sandbox surface) get
+// an `Api` prefix.
+export type Seed = Api<"Seed">;
+export type DatasetRow = Api<"DatasetRow">;
+export type ScenarioValidation = Api<"ScenarioValidation">;
+export type RolloutEvaluation = Api<"RolloutEvaluation">;
+export type ApiRollout = Api<"Rollout">;
+export type ApiToolCall = Api<"ToolCall">;
+
 export const DEFAULT_BASE_URL =
   "https://synthia-research--synthia-api-web.modal.run";
 
@@ -259,21 +274,21 @@ class Http {
     this.headers = headers;
   }
 
-  async get(
+  async get<T = unknown>(
     path: string,
     params?: Record<string, string | number>,
-  ): Promise<any> {
+  ): Promise<T> {
     await this.ready;
     const r = await this.raw("GET", path, undefined, params);
     if (!r.ok) throw new HttpError(r.status, await r.text(), "GET", path);
-    return r.json();
+    return r.json() as Promise<T>;
   }
 
-  async post(path: string, body?: unknown): Promise<any> {
+  async post<T = unknown>(path: string, body?: unknown): Promise<T> {
     await this.ready;
     const r = await this.raw("POST", path, body);
     if (!r.ok) throw new HttpError(r.status, await r.text(), "POST", path);
-    return r.json();
+    return r.json() as Promise<T>;
   }
 
   /** Binary GET (audio artifacts). */
@@ -373,7 +388,9 @@ class EventStream {
 
   async pump(): Promise<void> {
     if (!this.enabled) return;
-    const body = await this.http.get(this.path, { after: this.#after });
+    const body = await this.http.get<Api<"EventList">>(this.path, {
+      after: this.#after,
+    });
     for (const event of body.data) {
       this.#after = event.seq;
       const detail = Object.entries(event.data)
@@ -419,17 +436,17 @@ export class ValidationRun {
 
   label: string | null;
 
-  constructor(data: any, http: Http) {
+  constructor(data: Api<"ValidationRun">, http: Http) {
     this.id = data.id;
     this.dataset_id = data.dataset_id;
     this.status = data.status;
     this.label = data.label ?? null;
-    this.verdict = data.verdict;
-    this.reference = data.reference;
-    this.validity = data.validity;
-    this.fidelity = data.fidelity;
-    this.diversity = data.diversity;
-    this.error = data.error;
+    this.verdict = data.verdict ?? null;
+    this.reference = data.reference ?? null;
+    this.validity = data.validity ?? null;
+    this.fidelity = data.fidelity ?? null;
+    this.diversity = data.diversity ?? null;
+    this.error = data.error ?? null;
     this.#http = http;
   }
 
@@ -449,14 +466,16 @@ export class ValidationRun {
         );
       }
       await sleep(pollInterval * 1000);
-      const data = await this.#http.get(`/v1/validation-runs/${this.id}`);
+      const data = await this.#http.get<Api<"ValidationRun">>(
+        `/v1/validation-runs/${this.id}`,
+      );
       this.status = data.status;
-      this.verdict = data.verdict;
-      this.reference = data.reference;
-      this.validity = data.validity;
-      this.fidelity = data.fidelity;
-      this.diversity = data.diversity;
-      this.error = data.error;
+      this.verdict = data.verdict ?? null;
+      this.reference = data.reference ?? null;
+      this.validity = data.validity ?? null;
+      this.fidelity = data.fidelity ?? null;
+      this.diversity = data.diversity ?? null;
+      this.error = data.error ?? null;
       await events.pump();
     }
     await events.pump(); // catch events written after the final status poll
@@ -467,8 +486,8 @@ export class ValidationRun {
   }
 
   /** Per-scenario judge verdicts: scenario_id, passed, judge. */
-  async scenarios(): Promise<any[]> {
-    const body = await this.#http.get(
+  async scenarios(): Promise<ScenarioValidation[]> {
+    const body = await this.#http.get<Api<"ScenarioValidationList">>(
       `/v1/validation-runs/${this.id}/scenarios`,
     );
     return body.data;
@@ -482,7 +501,7 @@ export class Dataset {
   row_count: number;
   #http: Http;
 
-  constructor(data: any, http: Http) {
+  constructor(data: Api<"Dataset">, http: Http) {
     this.id = data.id;
     this.generation_id = data.generation_id;
     this.user_model_id = data.user_model_id;
@@ -490,8 +509,10 @@ export class Dataset {
     this.#http = http;
   }
 
-  async download(): Promise<any[]> {
-    const body = await this.#http.get(`/v1/datasets/${this.id}/rows`);
+  async download(): Promise<DatasetRow[]> {
+    const body = await this.#http.get<Api<"DatasetRows">>(
+      `/v1/datasets/${this.id}/rows`,
+    );
     return body.data;
   }
 
@@ -500,7 +521,7 @@ export class Dataset {
    * name shown on the platform's Runs page.
    */
   async validate(label?: string): Promise<ValidationRun> {
-    const data = await this.#http.post(
+    const data = await this.#http.post<Api<"ValidationRun">>(
       `/v1/datasets/${this.id}/validations`,
       label ? { label } : undefined,
     );
@@ -525,13 +546,13 @@ export class GenerationJob {
   error: string | null;
   #http: Http;
 
-  constructor(data: any, http: Http) {
+  constructor(data: Api<"GenerationJob">, http: Http) {
     this.id = data.id;
     this.status = data.status;
     this.user_model_id = data.user_model_id;
     this.count = data.count;
-    this.dataset_id = data.dataset_id;
-    this.error = data.error;
+    this.dataset_id = data.dataset_id ?? null;
+    this.error = data.error ?? null;
     this.#http = http;
   }
 
@@ -551,17 +572,21 @@ export class GenerationJob {
         );
       }
       await sleep(pollInterval * 1000);
-      const data = await this.#http.get(`/v1/generations/${this.id}`);
+      const data = await this.#http.get<Api<"GenerationJob">>(
+        `/v1/generations/${this.id}`,
+      );
       this.status = data.status;
-      this.dataset_id = data.dataset_id;
-      this.error = data.error;
+      this.dataset_id = data.dataset_id ?? null;
+      this.error = data.error ?? null;
       await events.pump();
     }
     await events.pump(); // catch events written after the final status poll
     if (this.status !== "succeeded") {
       throw new Error(`generation ${this.id} failed: ${this.error}`);
     }
-    const data = await this.#http.get(`/v1/datasets/${this.dataset_id}`);
+    const data = await this.#http.get<Api<"Dataset">>(
+      `/v1/datasets/${this.dataset_id}`,
+    );
     return new Dataset(data, this.#http);
   }
 }
@@ -587,13 +612,13 @@ export class Seeds {
     content: Record<string, unknown> | AudioInput;
     version?: string;
     metadata?: Record<string, unknown>;
-  }): Promise<any> {
+  }): Promise<Seed> {
     const audioB64 = asAudioB64(opts.content);
     if (audioB64 !== null) {
       const filename =
         typeof opts.content === "string" ? basename(opts.content) : null;
       try {
-        return await this.#http.post("/v1/seeds", {
+        return await this.#http.post<Seed>("/v1/seeds", {
           kind: opts.kind,
           source: opts.source,
           audio_b64: audioB64,
@@ -605,7 +630,7 @@ export class Seeds {
         throw translateVoice403(e);
       }
     }
-    return this.#http.post("/v1/seeds", {
+    return this.#http.post<Seed>("/v1/seeds", {
       kind: opts.kind,
       source: opts.source,
       content: opts.content,
@@ -634,16 +659,17 @@ export class UserModels {
     opts: { maxTurns?: number; verbose?: boolean } = {},
   ): Promise<UserModel> {
     const { maxTurns = 10, verbose = false } = opts;
-    let session = await this.#http.post("/v1/probe-sessions", {
-      max_turns: maxTurns,
-    });
+    let session = await this.#http.post<Api<"ProbeSession">>(
+      "/v1/probe-sessions",
+      { max_turns: maxTurns },
+    );
     const events = new EventStream(
       this.#http,
       `/v1/probe-sessions/${session.id}/events`,
       verbose,
     );
     while (session.status === "active") {
-      const raw = await agent(session.next_probe);
+      const raw = await agent(session.next_probe!);
       const reply = typeof raw === "string" ? raw : raw.reply;
       const toolCalls =
         typeof raw === "string"
@@ -654,23 +680,29 @@ export class UserModels {
               output: tc.output ?? null,
               is_error: tc.is_error ?? false,
             }));
-      session = await this.#http.post(
+      session = await this.#http.post<Api<"ProbeSession">>(
         `/v1/probe-sessions/${session.id}/responses`,
         { reply, tool_calls: toolCalls },
       );
       await events.pump();
     }
-    return this.get(session.user_model_id);
+    return this.get(session.user_model_id!);
   }
 
   async get(modelId: string): Promise<UserModel> {
-    return this.#http.get(`/v1/user-models/${modelId}`);
+    return this.#http.get<UserModel>(`/v1/user-models/${modelId}`);
   }
 
   async list(session?: string): Promise<UserModel[]> {
     const params = session ? { sdk_session: session } : undefined;
-    const body = await this.#http.get("/v1/user-models", params);
-    return body.data;
+    const body = await this.#http.get<Api<"UserModelList">>(
+      "/v1/user-models",
+      params,
+    );
+    return body.data.map((m) => ({
+      ...m,
+      representation_id: m.representation_id ?? null,
+    }));
   }
 }
 
@@ -682,15 +714,20 @@ export class Datasets {
   }
 
   async get(datasetId: string): Promise<Dataset> {
-    const data = await this.#http.get(`/v1/datasets/${datasetId}`);
+    const data = await this.#http.get<Api<"Dataset">>(
+      `/v1/datasets/${datasetId}`,
+    );
     return new Dataset(data, this.#http);
   }
 
   /** Datasets newest first; `session` filters to one SDK session. */
   async list(session?: string): Promise<Dataset[]> {
     const params = session ? { sdk_session: session } : undefined;
-    const body = await this.#http.get("/v1/datasets", params);
-    return body.data.map((d: any) => new Dataset(d, this.#http));
+    const body = await this.#http.get<Api<"DatasetList">>(
+      "/v1/datasets",
+      params,
+    );
+    return body.data.map((d) => new Dataset(d, this.#http));
   }
 
   /**
@@ -708,7 +745,10 @@ export class Datasets {
       count,
     };
     if (qualityCheckId) body["quality_check_id"] = qualityCheckId;
-    const data = await this.#http.post("/v1/generations", body);
+    const data = await this.#http.post<Api<"GenerationJob">>(
+      "/v1/generations",
+      body,
+    );
     return new GenerationJob(data, this.#http);
   }
 }
@@ -742,12 +782,12 @@ export class QualityCheck {
   error: string | null;
   #http: Http;
 
-  constructor(data: any, http: Http) {
+  constructor(data: Api<"QualityCheck">, http: Http) {
     this.id = data.id;
     this.status = data.status;
     this.rollout_ids = data.rollout_ids;
     this.label = data.label ?? null;
-    this.error = data.error;
+    this.error = data.error ?? null;
     this.#http = http;
   }
 
@@ -767,9 +807,11 @@ export class QualityCheck {
         );
       }
       await sleep(pollInterval * 1000);
-      const data = await this.#http.get(`/v1/quality-checks/${this.id}`);
+      const data = await this.#http.get<Api<"QualityCheck">>(
+        `/v1/quality-checks/${this.id}`,
+      );
       this.status = data.status;
-      this.error = data.error;
+      this.error = data.error ?? null;
       await events.pump();
     }
     await events.pump(); // catch events written after the final status poll
@@ -783,8 +825,8 @@ export class QualityCheck {
    * Per-rollout results: rollout_id, passed, states (the agentic-state
    * trajectory), and judge (dimensions + issues).
    */
-  async rollouts(): Promise<any[]> {
-    const body = await this.#http.get(
+  async rollouts(): Promise<RolloutEvaluation[]> {
+    const body = await this.#http.get<Api<"RolloutEvaluationList">>(
       `/v1/quality-checks/${this.id}/rollouts`,
     );
     return body.data;
@@ -804,20 +846,20 @@ export class VoiceRender {
   params: Record<string, unknown>;
   duration_ms: number | null;
   wpm: number | null;
-  provenance: any[] | null;
+  provenance: Record<string, unknown>[] | null;
   error: string | null;
   #http: Http;
 
-  constructor(data: any, http: Http) {
+  constructor(data: Api<"VoiceRender">, http: Http) {
     this.id = data.id;
     this.status = data.status;
-    this.scenario_id = data.scenario_id;
-    this.rollout_id = data.rollout_id;
-    this.params = data.params;
-    this.duration_ms = data.duration_ms;
-    this.wpm = data.wpm;
-    this.provenance = data.provenance;
-    this.error = data.error;
+    this.scenario_id = data.scenario_id ?? null;
+    this.rollout_id = data.rollout_id ?? null;
+    this.params = data.params ?? {};
+    this.duration_ms = data.duration_ms ?? null;
+    this.wpm = data.wpm ?? null;
+    this.provenance = data.provenance ?? null;
+    this.error = data.error ?? null;
     this.#http = http;
   }
 
@@ -838,13 +880,15 @@ export class VoiceRender {
         );
       }
       await sleep(pollInterval * 1000);
-      const data = await this.#http.get(`/v1/voice-renders/${this.id}`);
+      const data = await this.#http.get<Api<"VoiceRender">>(
+        `/v1/voice-renders/${this.id}`,
+      );
       this.status = data.status;
-      this.params = data.params;
-      this.duration_ms = data.duration_ms;
-      this.wpm = data.wpm;
-      this.provenance = data.provenance;
-      this.error = data.error;
+      this.params = data.params ?? {};
+      this.duration_ms = data.duration_ms ?? null;
+      this.wpm = data.wpm ?? null;
+      this.provenance = data.provenance ?? null;
+      this.error = data.error ?? null;
       await events.pump();
     }
     await events.pump(); // catch events written after the final status poll
@@ -906,7 +950,7 @@ export interface RolloutResult {
   status: string;
   turns: number;
   transcript: TranscriptTurn[];
-  tool_events: any[];
+  tool_events: ApiToolCall[];
   voice_render?: VoiceRender | null;
 }
 
@@ -941,8 +985,8 @@ export class Rollouts {
    * A stored rollout's full captured state: status, seed, transcript,
    * tool events, and sandbox.
    */
-  async get(rolloutId: string): Promise<any> {
-    return this.#http.get(`/v1/rollouts/${rolloutId}`);
+  async get(rolloutId: string): Promise<ApiRollout> {
+    return this.#http.get<ApiRollout>(`/v1/rollouts/${rolloutId}`);
   }
 
   /**
@@ -998,15 +1042,15 @@ export class Rollouts {
     if (dataset === null) {
       // Session-scoped default: this script's latest dataset, so two
       // concurrent scripts never pick up each other's data.
-      let data: any[] = [];
+      let data: Api<"Dataset">[] = [];
       if (this.#sessionId) {
-        const body = await this.#http.get("/v1/datasets", {
+        const body = await this.#http.get<Api<"DatasetList">>("/v1/datasets", {
           sdk_session: this.#sessionId,
         });
         data = body.data;
       }
       if (!data.length) {
-        const body = await this.#http.get("/v1/datasets");
+        const body = await this.#http.get<Api<"DatasetList">>("/v1/datasets");
         data = body.data;
         if (data.length && this.#sessionId) {
           console.log(
@@ -1022,8 +1066,10 @@ export class Rollouts {
     } else {
       datasetId = typeof dataset === "string" ? dataset : dataset.id;
     }
-    const body = await this.#http.get(`/v1/datasets/${datasetId}/rows`);
-    const rows: any[] = body.data;
+    const body = await this.#http.get<Api<"DatasetRows">>(
+      `/v1/datasets/${datasetId}/rows`,
+    );
+    const rows = body.data;
     const results: RolloutResult[] = new Array(rows.length);
     let next = 0;
     const worker = async () => {
@@ -1069,14 +1115,14 @@ export class Rollouts {
     priorTurn: number,
     body: Record<string, unknown>,
     original: unknown,
-  ): Promise<any> {
+  ): Promise<ApiRollout> {
     const transient =
       original instanceof TypeError ||
       (original instanceof HttpError && RETRYABLE_STATUS.has(original.status));
     if (!transient) throw original;
-    let fetched: any;
+    let fetched: ApiRollout;
     try {
-      fetched = await this.#http.get(`/v1/rollouts/${rolloutId}`); // retried
+      fetched = await this.#http.get<ApiRollout>(`/v1/rollouts/${rolloutId}`); // retried
     } catch {
       throw original; // can't confirm state — surface the original failure
     }
@@ -1084,7 +1130,7 @@ export class Rollouts {
       return fetched; // the turn landed (or the rollout finished); continue
     }
     // The turn never reached the server — safe to send it again.
-    return this.#http.post(`/v1/rollouts/${rolloutId}/turns`, body);
+    return this.#http.post<ApiRollout>(`/v1/rollouts/${rolloutId}/turns`, body);
   }
 
   /**
@@ -1099,10 +1145,10 @@ export class Rollouts {
     const rolloutIds = rollouts.map((r) =>
       typeof r === "string" ? r : r.rollout_id,
     );
-    const data = await this.#http.post("/v1/quality-checks", {
-      rollout_ids: rolloutIds,
-      label: label ?? null,
-    });
+    const data = await this.#http.post<Api<"QualityCheck">>(
+      "/v1/quality-checks",
+      { rollout_ids: rolloutIds, label: label ?? null },
+    );
     return new QualityCheck(data, this.#http);
   }
 
@@ -1118,7 +1164,7 @@ export class Rollouts {
     } = {},
   ): Promise<RolloutResult> {
     const { maxTurns = 12, randomSeed = null, agentMeta, datasetId } = opts;
-    let session = await this.#http.post("/v1/rollouts", {
+    let session = await this.#http.post<ApiRollout>("/v1/rollouts", {
       scenario_id: scenarioId,
       random_seed: randomSeed,
       max_turns: maxTurns,
@@ -1144,7 +1190,7 @@ export class Rollouts {
       // only re-send if the turn didn't land (check-then-act idempotency).
       const priorTurn: number = session.turn;
       try {
-        session = await this.#http.post(
+        session = await this.#http.post<ApiRollout>(
           `/v1/rollouts/${session.id}/turns`,
           body,
         );
@@ -1237,7 +1283,7 @@ export interface EvalOutcome {
   results: RolloutResult[];
   qualityCheck: QualityCheck;
   /** Per-rollout judge rows: rollout_id, passed, states, judge. */
-  evaluations: any[];
+  evaluations: RolloutEvaluation[];
   /** Judged pass fraction across all rollouts; null when none judged. */
   passRate: number | null;
 }
@@ -1364,14 +1410,14 @@ export class Synthia {
     if (r.status === 401) {
       const detail = await r
         .json()
-        .then((b: any) => b.detail)
+        .then((b) => (b as { detail?: string }).detail)
         .catch(() => null);
       throw new Error(detail ?? "invalid API key");
     }
     if (!r.ok) {
       throw new HttpError(r.status, await r.text(), "POST", "/v1/sdk-sessions");
     }
-    const data = (await r.json()) as any;
+    const data = (await r.json()) as Api<"SdkSession">;
     this.sessionId = data.sdk_session_id;
     this.invocationId = data.sdk_invocation_id;
     this.voiceEnabled = data.voice_enabled ?? false;
@@ -1535,7 +1581,7 @@ export class Synthia {
       });
     }
 
-    const latest = await this.#http.get(
+    const latest = await this.#http.get<Api<"QualityCheckSummary">>(
       "/v1/quality-checks/latest",
       this.sessionId ? { sdk_session: this.sessionId } : undefined,
     );
@@ -1555,7 +1601,7 @@ export class Synthia {
           `success rate ${pct(rate)} ${direction} ${pct(bound)}; ` +
           `regenerating calibrated on ${latest.id}`,
         successRate: rate,
-        qualityCheckId: latest.id,
+        qualityCheckId: latest.id ?? null,
       });
     }
 
