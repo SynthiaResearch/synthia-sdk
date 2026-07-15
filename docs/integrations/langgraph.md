@@ -57,6 +57,7 @@ permissions:
   pull-requests: write
 jobs:
   evals:
+    name: Synthia Judge
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:

@@ -67,6 +67,7 @@ agent, install from PyPI and set `language: python` — the action shells out to
 ```yaml
 jobs:
   evals:
+    name: Synthia Judge
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
