@@ -71,6 +71,38 @@ Awaits the handshake explicitly. Every request waits on it implicitly, so
 this is optional — call it to fail fast on a bad API key and to read the
 handshake-mirrored fields (`ciSettings`, `voiceEnabled`) before acting.
 
+### `await synthia.run(agent, options?)` → `EvalOutcome`
+
+The whole evaluation in one call — the script-path equivalent of CI's
+`synthia run`, minus the gating (thresholds, exit codes, and report files
+stay yours): `prepare` (probe + generate, or reuse) → roll out every
+scenario against `agent` → judge the rollouts → return the judged results.
+
+```ts
+const outcome = await synthia.run(myRolloutAgent, {
+  agentMeta: { name: "my-agent", version: "1.2" },
+});
+console.log(outcome.passRate, outcome.evaluations);
+```
+
+| Option | Default | Meaning |
+| --- | --- | --- |
+| `count` / `minSuccessRate` / `maxSuccessRate` | `20` / `0.6` / `0.9` | Passed through to `prepare()`. |
+| `dataset` | — | Roll out this dataset (id or `Dataset`); skips `prepare()` entirely. |
+| `probeAgent` | derived | Probe agent for user-model creation. By default `agent` itself is driven: each probe question becomes a one-turn conversation and the sandbox calls it makes are traced onto the reply. |
+| `probeMaxTurns` | `10` | Probe conversation cap. |
+| `maxTurns` | `12` | Rollout turn cap. |
+| `concurrency` | `4` | Scenarios in flight at once. |
+| `repeats` | `1` | Roll the whole dataset out this many times. |
+| `label` | — | Human name for the run on the platform's Runs page. |
+| `agentMeta` | — | Which agent is under test (any JSON); strongly recommended. |
+| `verbose` | `false` | Stream server telemetry. |
+
+`EvalOutcome`: `{ prepare, dataset, results, qualityCheck, evaluations,
+passRate }` — `prepare` is `null` when you passed `dataset`; `passRate` is
+the judged pass fraction (`null` when nothing was judged). The individual
+steps below remain available when you need to intervene between them.
+
 ### `await synthia.prepare(agent, options?)` → `PrepareResult`
 
 The main entry point for the probe/generate half of the pipeline: **probe +

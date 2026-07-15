@@ -227,6 +227,23 @@ class ToolSandbox:
 RolloutAgent = Callable[[list, ToolSandbox], Union[str, bytes, Path]]
 
 
+def _probe_from_rollout(agent: RolloutAgent) -> Agent:
+    """Drive a RolloutAgent with a probe question as a one-turn
+    conversation, tracing its sandbox calls onto the probe reply so
+    probing still observes tool usage."""
+    def probe(question: str) -> AgentReply:
+        sandbox = ToolSandbox(seed=0)
+        reply = agent([{"role": "user", "content": question}], sandbox)
+        if not isinstance(reply, str):
+            raise TypeError("probing needs a text reply — pass probe_agent "
+                            "for audio agents")
+        return AgentReply(reply=reply, tool_calls=[
+            ToolCall(name=e["name"], input=e["input"], output=e.get("output"),
+                     is_error=bool(e.get("is_error")))
+            for e in sandbox.events])
+    return probe
+
+
 class _EventStream:
     """Cursor-based poller that prints a run's server-side telemetry."""
 
@@ -606,6 +623,17 @@ class RolloutResult:
     voice_render: "VoiceRender | None" = None
 
 
+@dataclass
+class EvalOutcome:
+    """Outcome of Synthia.run(): everything each step produced, judged."""
+    prepare: PrepareResult | None   # None when a dataset was passed in
+    dataset: Dataset
+    results: "list[RolloutResult]"
+    quality_check: QualityCheck
+    evaluations: list[dict]         # per-rollout judge rows
+    pass_rate: float | None         # judged pass fraction; None when empty
+
+
 class Rollouts:
     def __init__(self, http: httpx.Client, session_id: str | None = None,
                  voice_auto: bool = False):
@@ -947,6 +975,50 @@ class Synthia:
                     self.voice_render(scenario_id=row["scenario_id"],
                                       takes=1))
         return result
+
+    def run(self, agent: RolloutAgent, *, count: int = 20,
+            dataset: Union[Dataset, str, None] = None,
+            probe_agent: Agent | None = None,
+            max_turns: int = 12, probe_max_turns: int = 10,
+            concurrency: int = 4, repeats: int = 1,
+            min_success_rate: float = 0.6, max_success_rate: float = 0.9,
+            label: str | None = None, agent_meta: dict | None = None,
+            verbose: bool = False) -> EvalOutcome:
+        """The whole evaluation in one call: prepare (probe + generate, or
+        reuse) -> roll out every scenario against `agent` -> judge the
+        rollouts -> return the judged results. The script-path equivalent
+        of `synthia run`, minus the CI gating: thresholds and exit codes
+        stay yours.
+
+        `probe_agent` overrides the probing default, which drives `agent`
+        itself: each probe question becomes a one-turn conversation and
+        the sandbox calls it makes are traced onto the reply. Passing
+        `dataset` (id or Dataset) skips prepare entirely.
+        """
+        prepare = None
+        if dataset is not None:
+            target = (self.datasets.get(dataset)
+                      if isinstance(dataset, str) else dataset)
+        else:
+            prepare = self.prepare(
+                probe_agent or _probe_from_rollout(agent),
+                count=count, max_turns=probe_max_turns,
+                min_success_rate=min_success_rate,
+                max_success_rate=max_success_rate, verbose=verbose)
+            target = prepare.dataset
+        results: list[RolloutResult] = []
+        for _ in range(repeats):
+            results.extend(self.rollouts.run(
+                agent, target, max_turns=max_turns,
+                concurrency=concurrency, agent_meta=agent_meta))
+        quality_check = self.rollouts.quality_check(results, label)
+        quality_check.wait(verbose=verbose)
+        evaluations = quality_check.rollouts()
+        passed = sum(1 for e in evaluations if e.get("passed"))
+        return EvalOutcome(
+            prepare=prepare, dataset=target, results=results,
+            quality_check=quality_check, evaluations=evaluations,
+            pass_rate=(passed / len(evaluations)) if evaluations else None)
 
     def _prepare(self, agent: Agent, *, count: int, max_turns: int,
                  min_success_rate: float, max_success_rate: float,

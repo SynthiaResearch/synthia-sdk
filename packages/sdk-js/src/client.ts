@@ -5,7 +5,7 @@ import { basename, dirname, extname, resolve } from "node:path";
 export const DEFAULT_BASE_URL =
   "https://synthia-research--synthia-api-web.modal.run";
 
-const SDK_VERSION = "0.0.10"; // keep in lockstep with package.json
+const SDK_VERSION = "0.0.11"; // keep in lockstep with package.json
 
 // File suffixes treated as audio where inputs are overloaded (seeds.ingest
 // content, rollout agent replies).
@@ -1202,6 +1202,62 @@ export interface PrepareOptions {
   voice?: boolean;
 }
 
+export interface EvalOptions {
+  /** Dataset size, passed to prepare(); ignored when `dataset` is given. */
+  count?: number;
+  /** Roll out this dataset (id or Dataset) instead of preparing one. */
+  dataset?: Dataset | string;
+  /** Probe agent for user-model creation. Defaults to driving `agent`
+   * itself: each probe question becomes a one-turn conversation and the
+   * sandbox calls it makes are traced onto the reply. */
+  probeAgent?: Agent;
+  maxTurns?: number;
+  /** Max probe turns during prepare(). */
+  probeMaxTurns?: number;
+  concurrency?: number;
+  /** Roll the whole dataset out this many times (variance across runs). */
+  repeats?: number;
+  /** prepare()'s reuse band: outside it, the dataset regenerates
+   * calibrated on the latest quality check. */
+  minSuccessRate?: number;
+  maxSuccessRate?: number;
+  /** Human name for the run on the platform's Runs page. */
+  label?: string;
+  /** Which agent is under test ({name, version, model, ...} — any JSON).
+   * Pure telemetry; strongly recommended. */
+  agentMeta?: Record<string, unknown>;
+  verbose?: boolean;
+}
+
+/** Outcome of Synthia.run(): everything each step produced, judged. */
+export interface EvalOutcome {
+  /** How the dataset was prepared; null when `dataset` was passed in. */
+  prepare: PrepareResult | null;
+  dataset: Dataset;
+  results: RolloutResult[];
+  qualityCheck: QualityCheck;
+  /** Per-rollout judge rows: rollout_id, passed, states, judge. */
+  evaluations: any[];
+  /** Judged pass fraction across all rollouts; null when none judged. */
+  passRate: number | null;
+}
+
+/** Drive a RolloutAgent with a probe question as a one-turn conversation,
+ * tracing its sandbox calls onto the probe reply so probing still
+ * observes tool usage. */
+function probeFromRollout(agent: RolloutAgent): Agent {
+  return async (probe: string) => {
+    const sandbox = new ToolSandbox(0);
+    const reply = await agent([{ role: "user", content: probe }], sandbox);
+    if (typeof reply !== "string") {
+      throw new Error(
+        "probing needs a text reply — pass probeAgent for audio agents",
+      );
+    }
+    return { reply, tool_calls: sandbox.events };
+  };
+}
+
 /**
  * Client entry point.
  *
@@ -1386,6 +1442,72 @@ export class Synthia {
       }
     }
     return result;
+  }
+
+  /**
+   * The whole evaluation in one call: prepare (probe + generate, or
+   * reuse) → roll out every scenario against `agent` → judge the
+   * rollouts → return the judged results. The script-path equivalent of
+   * `synthia run`, minus the CI gating: thresholds, exit codes, and
+   * report files stay yours.
+   */
+  async run(
+    agent: RolloutAgent,
+    opts: EvalOptions = {},
+  ): Promise<EvalOutcome> {
+    const {
+      count = 20,
+      dataset,
+      probeAgent,
+      maxTurns = 12,
+      probeMaxTurns = 10,
+      concurrency = 4,
+      repeats = 1,
+      minSuccessRate = 0.6,
+      maxSuccessRate = 0.9,
+      label,
+      agentMeta,
+      verbose = false,
+    } = opts;
+    let prepare: PrepareResult | null = null;
+    let target: Dataset;
+    if (dataset !== undefined) {
+      target =
+        typeof dataset === "string"
+          ? await this.datasets.get(dataset)
+          : dataset;
+    } else {
+      prepare = await this.prepare(probeAgent ?? probeFromRollout(agent), {
+        count,
+        maxTurns: probeMaxTurns,
+        minSuccessRate,
+        maxSuccessRate,
+        verbose,
+      });
+      target = prepare.dataset;
+    }
+    const results: RolloutResult[] = [];
+    for (let i = 0; i < repeats; i++) {
+      results.push(
+        ...(await this.rollouts.run(agent, target, {
+          maxTurns,
+          concurrency,
+          agentMeta,
+        })),
+      );
+    }
+    const qualityCheck = await this.rollouts.qualityCheck(results, label);
+    await qualityCheck.wait({ verbose });
+    const evaluations = await qualityCheck.rollouts();
+    const passed = evaluations.filter((e) => e.passed).length;
+    return {
+      prepare,
+      dataset: target,
+      results,
+      qualityCheck,
+      evaluations,
+      passRate: evaluations.length ? passed / evaluations.length : null,
+    };
   }
 
   async #prepare(agent: Agent, opts: PrepareOptions): Promise<PrepareResult> {

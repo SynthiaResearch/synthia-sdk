@@ -16,21 +16,19 @@ import { Synthia } from "synthiaresearch";
 
 const synthia = new Synthia(); // reads SYNTHIA_API_KEY / SYNTHIA_BASE_URL
 
-// Probe + generate only when needed; re-runs reuse this script's dataset.
-const { dataset } = await synthia.prepare(async (probe) => {
-  return myAgent.respond(probe);
-});
-
-// Play the scenarios against your agent; tools run in a deterministic sandbox.
-const results = await dataset.rollout(async (transcript, sandbox) => {
-  return myAgent.respondWithTools(transcript, sandbox);
-});
-
-// Judge every rollout server-side.
-const check = await synthia.rollouts.qualityCheck(results);
-await check.wait({ verbose: true });
-console.log(await check.rollouts());
+// One call: probe + generate (or reuse this script's dataset), play every
+// scenario against your agent, judge the rollouts server-side.
+const outcome = await synthia.run(
+  async (transcript, sandbox) => myAgent.respondWithTools(transcript, sandbox),
+  { agentMeta: { name: "my-agent", version: "1.2" } },
+);
+console.log(outcome.passRate, outcome.evaluations);
 ```
+
+Each step — `prepare()`, `dataset.rollout()`, `rollouts.qualityCheck()` —
+is also available
+[individually](https://github.com/SynthiaResearch/synthia-sdk/blob/main/docs/reference/js-api.md)
+when you need to intervene between them.
 
 ## In CI
 
@@ -49,7 +47,7 @@ for PR comments with baseline deltas. Setup guide:
 ## What's in the box
 
 - **[`Synthia` client](https://github.com/SynthiaResearch/synthia-sdk/blob/main/docs/reference/js-api.md)**
-  — `prepare()`, datasets, rollouts, quality checks, voice renders.
+  — `run()`, `prepare()`, datasets, rollouts, quality checks, voice renders.
 - **[`synthia` CLI](https://github.com/SynthiaResearch/synthia-sdk/blob/main/docs/reference/cli.md)**
   — `run`/`validate`, threshold + baseline-regression gates, a results JSON
   that never contains transcripts. Its core is importable from

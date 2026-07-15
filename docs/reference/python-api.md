@@ -21,6 +21,17 @@ from synthia import Synthia
 
 client = Synthia()  # reads SYNTHIA_API_KEY / SYNTHIA_BASE_URL
 
+# Everything in one call: prepare (probe + generate, or reuse) -> roll out
+# -> judge. The script-path equivalent of CI's `synthia run`, minus gating.
+outcome = client.run(my_rollout_agent,
+                     agent_meta={"name": "my-agent", "version": "1.2"})
+print(outcome.pass_rate, outcome.evaluations)
+```
+
+The steps stay available individually when you need to intervene between
+them:
+
+```python
 # Probe + generate only when needed; otherwise reuse this script's dataset.
 prepared = client.prepare(lambda probe: my_agent.respond(probe))
 
@@ -48,6 +59,15 @@ provenance). Public attributes after construction: `session_name`,
 `__init__`, so an invalid API key raises right there, and the
 handshake-mirrored attributes are readable immediately after construction.
 
+- **`run(agent, *, count=20, dataset=None, probe_agent=None, max_turns=12, probe_max_turns=10, concurrency=4, repeats=1, min_success_rate=0.6, max_success_rate=0.9, label=None, agent_meta=None, verbose=False)`**
+  → `EvalOutcome` — the one-call path
+  ([semantics](./js-api.md#await-synthiarunagent-options--evaloutcome)):
+  prepare → rollouts → quality check → judged results. `EvalOutcome`
+  fields: `prepare` (`None` when `dataset` was passed), `dataset`,
+  `results`, `quality_check`, `evaluations`, `pass_rate`. By default the
+  rollout agent itself is driven for probing (each probe question becomes
+  a one-turn conversation, sandbox calls traced onto the reply);
+  `probe_agent` overrides.
 - **`prepare(agent, *, count=20, max_turns=10, min_success_rate=0.6, max_success_rate=0.9, verbose=False, voice=False)`**
   → `PrepareResult` — identical decision rules to JS
   ([reuse vs regenerate](./js-api.md#await-synthiaprepareagent-options--prepareresult)).

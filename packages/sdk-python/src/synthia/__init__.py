@@ -1,6 +1,7 @@
 from .client import (
     AgentReply,
     Dataset,
+    EvalOutcome,
     GenerationJob,
     PrepareResult,
     QualityCheck,
@@ -15,4 +16,4 @@ from .client import (
 
 __all__ = ["Synthia", "UserModel", "GenerationJob", "Dataset", "AgentReply",
            "ToolCall", "ValidationRun", "QualityCheck", "RolloutResult",
-           "ToolSandbox", "PrepareResult", "VoiceRender"]
+           "ToolSandbox", "PrepareResult", "VoiceRender", "EvalOutcome"]

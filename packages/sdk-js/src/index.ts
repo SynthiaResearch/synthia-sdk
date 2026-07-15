@@ -17,6 +17,8 @@ export type {
   AgentReply,
   AudioInput,
   CiSettings,
+  EvalOptions,
+  EvalOutcome,
   PrepareOptions,
   PrepareResult,
   RolloutAgent,

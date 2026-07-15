@@ -16,21 +16,19 @@ from synthia import Synthia
 
 client = Synthia()  # reads SYNTHIA_API_KEY / SYNTHIA_BASE_URL
 
-# Probe + generate only when needed; re-runs reuse this script's dataset.
-prepared = client.prepare(lambda probe: my_agent.respond(probe))
-
-# Play the scenarios against your agent; tools run in a deterministic sandbox.
+# One call: probe + generate (or reuse this script's dataset), play every
+# scenario against your agent, judge the rollouts server-side.
 def rollout_agent(transcript, sandbox):
     return my_agent.respond_with_tools(transcript, sandbox)
 
-results = client.rollouts.run(rollout_agent, prepared.dataset,
-                              agent_meta={"name": "my-agent"})
-
-# Judge every rollout server-side.
-check = client.rollouts.quality_check(results)
-check.wait(verbose=True)
-print(check.rollouts())
+outcome = client.run(rollout_agent, agent_meta={"name": "my-agent"})
+print(outcome.pass_rate, outcome.evaluations)
 ```
+
+Each step — `prepare()`, `rollouts.run()`, `rollouts.quality_check()` — is
+also available
+[individually](https://github.com/SynthiaResearch/synthia-sdk/blob/main/docs/reference/python-api.md)
+when you need to intervene between them.
 
 ## In CI
 
