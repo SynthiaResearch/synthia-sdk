@@ -42,6 +42,9 @@ _RETRYABLE_STATUS = {500, 502, 503, 504, 429, 529}
 # replaying one could double-advance the transcript — run_scenario recovers
 # those explicitly (check-then-act) instead.
 _CREATE_POSTS = ("/v1/sdk-sessions", "/v1/rollouts", "/v1/quality-checks")
+# The server rejects quality checks over more rollouts than this
+# (MAX_QUALITY_ROLLOUTS); run() judges bigger result sets in chunks.
+_QUALITY_CHECK_CHUNK = 50
 
 
 def _backoff(attempt: int) -> float:
@@ -1037,9 +1040,19 @@ class Synthia:
             results.extend(self.rollouts.run(
                 agent, target, max_turns=max_turns,
                 concurrency=concurrency, agent_meta=agent_meta))
-        quality_check = self.rollouts.quality_check(results, label)
-        quality_check.wait(verbose=verbose)
-        evaluations = quality_check.rollouts()
+        # The server bounds one quality check's LLM fan-out at 50 rollouts;
+        # bigger runs judge in chunks and pool the evaluations. The outcome
+        # carries the last check; every chunk lands on the platform.
+        chunks = [results[i:i + _QUALITY_CHECK_CHUNK]
+                  for i in range(0, len(results), _QUALITY_CHECK_CHUNK)]
+        evaluations: list[dict] = []
+        quality_check = None
+        for part, chunk in enumerate(chunks, start=1):
+            chunk_label = (f"{label} {part}/{len(chunks)}"
+                           if label and len(chunks) > 1 else label)
+            quality_check = self.rollouts.quality_check(chunk, chunk_label)
+            quality_check.wait(verbose=verbose)
+            evaluations.extend(quality_check.rollouts())
         passed = sum(1 for e in evaluations if e.get("passed"))
         return EvalOutcome(
             prepare=prepare, dataset=target, results=results,

@@ -20,7 +20,10 @@ export type ApiToolCall = Api<"ToolCall">;
 export const DEFAULT_BASE_URL =
   "https://synthia-research--synthia-api-web.modal.run";
 
-const SDK_VERSION = "0.0.12"; // keep in lockstep with package.json
+const SDK_VERSION = "0.0.13"; // keep in lockstep with package.json
+// The server rejects quality checks over more rollouts than this
+// (MAX_QUALITY_ROLLOUTS); run() judges bigger result sets in chunks.
+const QUALITY_CHECK_CHUNK = 50;
 
 // File suffixes treated as audio where inputs are overloaded (seeds.ingest
 // content, rollout agent replies).
@@ -1551,9 +1554,23 @@ export class Synthia {
         })),
       );
     }
-    const qualityCheck = await this.rollouts.qualityCheck(results, label);
-    await qualityCheck.wait({ verbose });
-    const evaluations = await qualityCheck.rollouts();
+    // The server bounds one quality check's LLM fan-out at 50 rollouts;
+    // bigger runs judge in chunks and pool the evaluations. The outcome
+    // carries the last check; every chunk lands on the platform.
+    const chunks: RolloutResult[][] = [];
+    for (let i = 0; i < results.length; i += QUALITY_CHECK_CHUNK)
+      chunks.push(results.slice(i, i + QUALITY_CHECK_CHUNK));
+    const evaluations: RolloutEvaluation[] = [];
+    let qualityCheck!: QualityCheck;
+    for (const [part, chunk] of chunks.entries()) {
+      const chunkLabel =
+        label && chunks.length > 1
+          ? `${label} ${part + 1}/${chunks.length}`
+          : label;
+      qualityCheck = await this.rollouts.qualityCheck(chunk, chunkLabel);
+      await qualityCheck.wait({ verbose });
+      evaluations.push(...(await qualityCheck.rollouts()));
+    }
     const passed = evaluations.filter((e) => e.passed).length;
     return {
       prepare,
