@@ -113,7 +113,7 @@ async function respond(
       (item): item is OpenAI.Responses.ResponseFunctionToolCall => item.type === "function_call",
     );
     if (calls.length === 0) return response.output_text;
-    input.push(...response.output);
+    input.push(...(response.output as OpenAI.Responses.ResponseInputItem[]));
     for (const call of calls) {
       input.push({
         type: "function_call_output",
