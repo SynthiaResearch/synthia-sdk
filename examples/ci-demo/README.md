@@ -25,7 +25,7 @@ What it demonstrates:
 ```bash
 npm install
 export SYNTHIA_API_KEY=…      # your Synthia key
-export ANTHROPIC_API_KEY=…    # the toy agent runs on Claude
+export OPENAI_API_KEY=…    # the toy agent runs on GPT
 
 npx synthia validate          # config + entrypoint check, no network
 npx synthia run               # play the suite, judge it, gate on thresholds

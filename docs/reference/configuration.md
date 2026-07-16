@@ -17,7 +17,7 @@ server at the copy in this repo:
 version: 1
 agent:
   entrypoint: ./src/agent.ts      # module exporting your RolloutAgent
-  meta: { name: my-agent, model: claude-sonnet-5 }
+  meta: { name: my-agent, model: gpt-5.6-terra }
 run:
   dataset: ds_1a2b3c4d5e6f        # pin one; created once via prepare()
   max_turns: 12

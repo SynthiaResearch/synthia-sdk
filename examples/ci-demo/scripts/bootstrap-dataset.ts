@@ -2,7 +2,7 @@
  * One-time bootstrap: probe the agent, build a user model, and generate the
  * scenario dataset that synthia.yaml pins for CI runs.
  *
- *   SYNTHIA_API_KEY=... ANTHROPIC_API_KEY=... \
+ *   SYNTHIA_API_KEY=... OPENAI_API_KEY=... \
  *     node --experimental-strip-types scripts/bootstrap-dataset.ts
  *
  * Prints the ds_… id to paste into synthia.yaml's run.dataset. Uses the same

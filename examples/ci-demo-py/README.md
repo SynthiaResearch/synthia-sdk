@@ -20,9 +20,9 @@ Python-specific things it demonstrates:
 ## Run it
 
 ```bash
-uv sync                       # or: pip install synthiaresearch anthropic
+uv sync                       # or: pip install synthiaresearch openai
 export SYNTHIA_API_KEY=…
-export ANTHROPIC_API_KEY=…
+export OPENAI_API_KEY=…
 
 synthia validate              # config + entrypoint check, no network
 synthia run                   # play the suite, judge it, gate on thresholds

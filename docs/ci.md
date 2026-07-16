@@ -12,7 +12,7 @@ Vercel AI SDK) — each ends in a copy-paste `synthia.yaml` + workflow.
 ## 1. Secret
 
 Add `SYNTHIA_API_KEY` to the repo's Actions secrets, plus whatever model keys
-your agent itself needs (e.g. `ANTHROPIC_API_KEY`).
+your agent itself needs (e.g. `OPENAI_API_KEY`).
 
 ## 2. `synthia.yaml`
 
@@ -83,7 +83,7 @@ jobs:
       - run: pip install synthiaresearch   # + your agent's own deps
       - uses: SynthiaResearch/synthia-action@v1
         env:
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
         with:
           api-key: ${{ secrets.SYNTHIA_API_KEY }}
           language: python
