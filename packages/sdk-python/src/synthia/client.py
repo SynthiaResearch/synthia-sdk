@@ -971,11 +971,15 @@ class Synthia:
             "phone_fx": phone_fx, "room_tone": room_tone,
             "voice_overrides": voice_overrides})
 
-    def prepare(self, agent: Agent, *, count: int = 20, max_turns: int = 10,
+    def prepare(self, agent: Agent, *, count: int = 100, max_turns: int = 10,
                 min_success_rate: float = 0.6, max_success_rate: float = 0.9,
+                reprobe: bool = False,
                 verbose: bool = False, voice: bool = False) -> PrepareResult:
         """Probe + generate only when needed; otherwise reuse the latest
-        dataset. See _prepare for the decision rules.
+        dataset. See _prepare for the decision rules. `reprobe=True` skips
+        every reuse check: the agent is re-interviewed, the context
+        re-distilled, and a fresh batch generated — use it when the agent
+        or its domain changed.
 
         voice=True additionally voices every scenario in the prepared
         dataset (an LLM authors each script, then a takes=1 render) —
@@ -986,7 +990,7 @@ class Synthia:
         result = self._prepare(agent, count=count, max_turns=max_turns,
                                min_success_rate=min_success_rate,
                                max_success_rate=max_success_rate,
-                               verbose=verbose)
+                               reprobe=reprobe, verbose=verbose)
         if voice:
             for row in result.dataset.download():
                 result.voice_renders.append(
@@ -994,9 +998,10 @@ class Synthia:
                                       takes=1))
         return result
 
-    def run(self, agent: RolloutAgent, *, count: int = 20,
+    def run(self, agent: RolloutAgent, *, count: int = 100,
             dataset: Union[Dataset, str, None] = None,
             probe_agent: Agent | None = None,
+            reprobe: bool = False,
             max_turns: int = 12, probe_max_turns: int = 10,
             concurrency: int = 4, repeats: int = 1,
             min_success_rate: float = 0.6, max_success_rate: float = 0.9,
@@ -1011,7 +1016,9 @@ class Synthia:
         `probe_agent` overrides the probing default, which drives `agent`
         itself: each probe question becomes a one-turn conversation and
         the sandbox calls it makes are traced onto the reply. Passing
-        `dataset` (id or Dataset) skips prepare entirely.
+        `dataset` (id or Dataset) skips prepare entirely. `reprobe=True`
+        forces the full refresh — re-interview the agent, re-distill its
+        context, generate a fresh batch — for when the agent changed.
         """
         prepare = None
         if dataset is not None:
@@ -1022,7 +1029,8 @@ class Synthia:
                 probe_agent or _probe_from_rollout(agent),
                 count=count, max_turns=probe_max_turns,
                 min_success_rate=min_success_rate,
-                max_success_rate=max_success_rate, verbose=verbose)
+                max_success_rate=max_success_rate, reprobe=reprobe,
+                verbose=verbose)
             target = prepare.dataset
         results: list[RolloutResult] = []
         for _ in range(repeats):
@@ -1040,7 +1048,7 @@ class Synthia:
 
     def _prepare(self, agent: Agent, *, count: int, max_turns: int,
                  min_success_rate: float, max_success_rate: float,
-                 verbose: bool) -> PrepareResult:
+                 reprobe: bool = False, verbose: bool = False) -> PrepareResult:
         """Probe + generate only when needed; otherwise reuse the latest dataset.
 
         The main entry point for the probe and generation steps. `count` is
@@ -1059,6 +1067,15 @@ class Synthia:
         same script reuses its own dataset, and drift signals from other
         scripts/sessions never trigger regeneration here.
         """
+        if reprobe:
+            # Explicit refresh: the caller says the agent (or its domain)
+            # changed. Skip every reuse check — new interview, new
+            # context, fresh batch. quality_check_id stays None so the
+            # probe actually re-runs (see _probe_and_generate).
+            return self._probe_and_generate(
+                agent, count=count, max_turns=max_turns, verbose=verbose,
+                reason="reprobe requested", success_rate=None,
+                quality_check_id=None, force_probe=True)
         existing = (self.datasets.list(session=self.session_id)
                     if self.session_id else self.datasets.list())  # newest first
         if not existing:
@@ -1110,12 +1127,14 @@ class Synthia:
     def _probe_and_generate(self, agent: Agent, *, count: int, max_turns: int,
                             verbose: bool, reason: str,
                             success_rate: float | None,
-                            quality_check_id: str | None) -> PrepareResult:
+                            quality_check_id: str | None,
+                            force_probe: bool = False) -> PrepareResult:
         # Without a drift signal the agent hasn't been shown to change, so a
         # user model this session already probed is still good — skip the
-        # probe. Drift-triggered regeneration re-probes deliberately.
+        # probe. Drift-triggered regeneration and reprobe=True re-probe
+        # deliberately.
         user_model = None
-        if self.session_id and not quality_check_id:
+        if self.session_id and not quality_check_id and not force_probe:
             session_models = self.user_models.list(session=self.session_id)
             if session_models:
                 user_model = session_models[-1]  # newest (list is oldest-first)

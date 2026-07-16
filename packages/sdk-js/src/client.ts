@@ -1239,6 +1239,10 @@ export interface PrepareOptions {
   maxTurns?: number;
   minSuccessRate?: number;
   maxSuccessRate?: number;
+  /** Force the full refresh: re-interview the agent, re-distill its
+   * context, and generate a fresh batch — use when the agent or its
+   * domain changed. Skips every reuse check. */
+  reprobe?: boolean;
   verbose?: boolean;
   /** Additionally voice every scenario in the prepared dataset (an LLM
    * authors each script, then a takes=1 render) — explicit opt-in because
@@ -1257,6 +1261,9 @@ export interface EvalOptions {
    * itself: each probe question becomes a one-turn conversation and the
    * sandbox calls it makes are traced onto the reply. */
   probeAgent?: Agent;
+  /** Force the full refresh: re-interview the agent, re-distill its
+   * context, and generate a fresh batch — use when the agent changed. */
+  reprobe?: boolean;
   maxTurns?: number;
   /** Max probe turns during prepare(). */
   probeMaxTurns?: number;
@@ -1502,9 +1509,10 @@ export class Synthia {
     opts: EvalOptions = {},
   ): Promise<EvalOutcome> {
     const {
-      count = 20,
+      count = 100,
       dataset,
       probeAgent,
+      reprobe = false,
       maxTurns = 12,
       probeMaxTurns = 10,
       concurrency = 4,
@@ -1528,6 +1536,7 @@ export class Synthia {
         maxTurns: probeMaxTurns,
         minSuccessRate,
         maxSuccessRate,
+        reprobe,
         verbose,
       });
       target = prepare.dataset;
@@ -1558,13 +1567,28 @@ export class Synthia {
 
   async #prepare(agent: Agent, opts: PrepareOptions): Promise<PrepareResult> {
     const {
-      count = 20,
+      count = 100,
       maxTurns = 10,
       minSuccessRate = 0.6,
       maxSuccessRate = 0.9,
+      reprobe = false,
       verbose = false,
     } = opts;
     await this.#http.ready;
+    if (reprobe) {
+      // Explicit refresh: the caller says the agent (or its domain)
+      // changed. Skip every reuse check — new interview, new context,
+      // fresh batch.
+      return this.#probeAndGenerate(agent, {
+        count,
+        maxTurns,
+        verbose,
+        reason: "reprobe requested",
+        successRate: null,
+        qualityCheckId: null,
+        forceProbe: true,
+      });
+    }
     const existing = await this.datasets.list(
       this.sessionId ?? undefined,
     ); // newest first
@@ -1644,14 +1668,16 @@ export class Synthia {
       reason: string;
       successRate: number | null;
       qualityCheckId: string | null;
+      forceProbe?: boolean;
     },
   ): Promise<PrepareResult> {
     // Without a drift signal the agent hasn't been shown to change, so a
     // user model this session already probed is still good — skip the
-    // probe. Drift-triggered regeneration re-probes deliberately.
+    // probe. Drift-triggered regeneration and reprobe re-probe
+    // deliberately.
     let reason = opts.reason;
     let userModel: UserModel | null = null;
-    if (this.sessionId && !opts.qualityCheckId) {
+    if (this.sessionId && !opts.qualityCheckId && !opts.forceProbe) {
       const sessionModels = await this.userModels.list(this.sessionId);
       if (sessionModels.length) {
         userModel = sessionModels[sessionModels.length - 1]!; // newest last

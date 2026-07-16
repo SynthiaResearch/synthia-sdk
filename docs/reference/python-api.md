@@ -59,7 +59,7 @@ provenance). Public attributes after construction: `session_name`,
 `__init__`, so an invalid API key raises right there, and the
 handshake-mirrored attributes are readable immediately after construction.
 
-- **`run(agent, *, count=20, dataset=None, probe_agent=None, max_turns=12, probe_max_turns=10, concurrency=4, repeats=1, min_success_rate=0.6, max_success_rate=0.9, label=None, agent_meta=None, verbose=False)`**
+- **`run(agent, *, count=100, dataset=None, probe_agent=None, reprobe=False, max_turns=12, probe_max_turns=10, concurrency=4, repeats=1, min_success_rate=0.6, max_success_rate=0.9, label=None, agent_meta=None, verbose=False)`**
   → `EvalOutcome` — the one-call path
   ([semantics](./js-api.md#await-synthiarunagent-options--evaloutcome)):
   prepare → rollouts → quality check → judged results. `EvalOutcome`
@@ -67,8 +67,10 @@ handshake-mirrored attributes are readable immediately after construction.
   `results`, `quality_check`, `evaluations`, `pass_rate`. By default the
   rollout agent itself is driven for probing (each probe question becomes
   a one-turn conversation, sandbox calls traced onto the reply);
-  `probe_agent` overrides.
-- **`prepare(agent, *, count=20, max_turns=10, min_success_rate=0.6, max_success_rate=0.9, verbose=False, voice=False)`**
+  `probe_agent` overrides. `reprobe=True` forces the full refresh —
+  re-interview the agent, re-distill its context, generate a fresh
+  batch — use when the agent changed.
+- **`prepare(agent, *, count=100, max_turns=10, min_success_rate=0.6, max_success_rate=0.9, reprobe=False, verbose=False, voice=False)`**
   → `PrepareResult` — identical decision rules to JS
   ([reuse vs regenerate](./js-api.md#await-synthiaprepareagent-options--prepareresult)).
   `PrepareResult` fields: `dataset`, `user_model`, `action`, `reason`,
