@@ -31,6 +31,11 @@ type Agent = (probe: string) => string | AgentReply | Promise<…>;
 // accounts). Scenarios run concurrently — no shared mutable state.
 type RolloutAgent = (transcript: TranscriptTurn[], sandbox: ToolSandbox)
   => string | AudioInput | Promise<string | AudioInput>;
+
+// TranscriptTurn.role is "user" (the simulated user) or "agent" (your
+// agent's earlier replies). Map "agent" to your stack's assistant role
+// before replaying history to your model — LLM APIs reject the literal
+// role "agent".
 ```
 
 If your agent is a chat-style handler, `fromChatHandler` in

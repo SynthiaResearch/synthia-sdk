@@ -120,7 +120,11 @@ Agent        = Callable[[str], Union[str, AgentReply]]
 RolloutAgent = Callable[[list[dict], ToolSandbox], Union[str, bytes, Path]]
 ```
 
-Rollout transcripts arrive as a `list` of `{"role", "content", ...}` dicts.
+Rollout transcripts arrive as a `list` of `{"role", "content", ...}` dicts,
+where `role` is `"user"` (the simulated user) or `"agent"` (your agent's
+earlier replies) — map `"agent"` to your stack's assistant role before
+replaying history to your model; LLM APIs reject the literal role
+`"agent"`.
 Returning `bytes` or an audio-file `Path` sends audio (voice-enabled
 accounts). `ToolSandbox` is hash-identical to the JS and server sandboxes:
 `call(name, tool_input)`, `report(name, output, *, input=None,
