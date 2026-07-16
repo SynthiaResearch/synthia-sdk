@@ -20,7 +20,7 @@ export type ApiToolCall = Api<"ToolCall">;
 export const DEFAULT_BASE_URL =
   "https://synthia-research--synthia-api-web.modal.run";
 
-const SDK_VERSION = "0.0.11"; // keep in lockstep with package.json
+const SDK_VERSION = "0.0.12"; // keep in lockstep with package.json
 
 // File suffixes treated as audio where inputs are overloaded (seeds.ingest
 // content, rollout agent replies).
