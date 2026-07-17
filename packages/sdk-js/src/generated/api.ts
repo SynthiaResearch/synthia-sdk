@@ -888,6 +888,8 @@ export interface components {
             status: "running" | "succeeded" | "failed";
             /** Error */
             error?: string | null;
+            /** Phase */
+            phase?: ("reading" | "distilling" | "world_model" | "writing_tests") | null;
             /**
              * Traces
              * @default []

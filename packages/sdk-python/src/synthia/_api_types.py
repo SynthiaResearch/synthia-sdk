@@ -397,6 +397,9 @@ class DemoSession(TypedDict):
     id: str
     status: Literal['running', 'succeeded', 'failed']
     error: NotRequired[str | None]
+    phase: NotRequired[
+        Literal['reading', 'distilling', 'world_model', 'writing_tests'] | None
+    ]
     traces: NotRequired[list[DemoTrace]]
 
 
