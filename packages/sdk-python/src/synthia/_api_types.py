@@ -110,6 +110,7 @@ class GenerationJob(TypedDict):
 class HealthResponse(TypedDict):
     status: str
     version: str
+    sha: NotRequired[str | None]
 
 
 class MetricDefinition(TypedDict):

@@ -1041,6 +1041,8 @@ export interface components {
             status: string;
             /** Version */
             version: string;
+            /** Sha */
+            sha?: string | null;
         };
         /** KeyUsage */
         KeyUsage: {
