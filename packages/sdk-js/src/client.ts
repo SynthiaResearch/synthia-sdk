@@ -20,7 +20,7 @@ export type ApiToolCall = Api<"ToolCall">;
 export const DEFAULT_BASE_URL =
   "https://synthia-research--synthia-api-web.modal.run";
 
-const SDK_VERSION = "0.0.13"; // keep in lockstep with package.json
+const SDK_VERSION = "0.0.14"; // keep in lockstep with package.json
 // The server rejects quality checks over more rollouts than this
 // (MAX_QUALITY_ROLLOUTS); run() judges bigger result sets in chunks.
 const QUALITY_CHECK_CHUNK = 50;
@@ -1080,6 +1080,7 @@ export class Rollouts {
         const i = next++;
         results[i] = await this.runScenario(agent, rows[i].scenario_id, {
           maxTurns,
+          randomSeed: rows[i].random_seed ?? undefined,
           agentMeta,
           datasetId,
         });

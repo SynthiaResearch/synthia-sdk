@@ -739,6 +739,7 @@ class Rollouts:
             results = list(pool.map(
                 lambda row: self.run_scenario(
                     agent, row["scenario_id"], max_turns=max_turns,
+                    random_seed=row.get("random_seed"),
                     agent_meta=agent_meta, dataset_id=dataset_id),
                 rows))
         if self._voice_auto:

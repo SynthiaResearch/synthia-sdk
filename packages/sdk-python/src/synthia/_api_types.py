@@ -39,6 +39,7 @@ class DatasetRow(TypedDict):
     task_family: str
     controls: dict[str, Any]
     spec: dict[str, Any]
+    random_seed: NotRequired[int | None]
 
 
 class DatasetRows(TypedDict):

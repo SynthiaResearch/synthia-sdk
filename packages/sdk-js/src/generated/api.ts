@@ -850,6 +850,8 @@ export interface components {
             spec: {
                 [key: string]: unknown;
             };
+            /** Random Seed */
+            random_seed?: number | null;
         };
         /** DatasetRows */
         DatasetRows: {
@@ -2979,6 +2981,7 @@ export interface operations {
         parameters: {
             query?: {
                 sdk_session?: string | null;
+                label?: string | null;
             };
             header?: never;
             path?: never;
