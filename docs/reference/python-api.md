@@ -133,6 +133,15 @@ and the `seed` / `state` / `events` attributes — semantics in the
 [JS reference](./js-api.md#toolsandbox). `ToolCall`, `AgentReply`,
 `UserModel`, `RolloutResult`, `PrepareResult` are dataclasses.
 
+**Stateful agents**: keep per-conversation state (stores, framework
+sessions) in `sandbox.context` — a plain dict created fresh for every
+rollout that dies with it. Rollouts run concurrently on reused threads, so
+module globals and thread-locals leak state across conversations, and
+external dicts keyed by `id(sandbox)` are unsafe (CPython recycles ids
+after garbage collection). Frameworks with their own memory (LangGraph
+checkpointers, session objects) should be fed only the newest transcript
+turn.
+
 ## Divergences from the JS SDK
 
 Deliberate and documented — not gaps queued for fixing:

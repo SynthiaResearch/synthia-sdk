@@ -20,7 +20,7 @@ export type ApiToolCall = Api<"ToolCall">;
 export const DEFAULT_BASE_URL =
   "https://synthia-research--synthia-api-web.modal.run";
 
-const SDK_VERSION = "0.0.15"; // keep in lockstep with package.json
+const SDK_VERSION = "0.0.16"; // keep in lockstep with package.json
 // The server rejects quality checks over more rollouts than this
 // (MAX_QUALITY_ROLLOUTS); run() judges bigger result sets in chunks.
 const QUALITY_CHECK_CHUNK = 50;
@@ -157,6 +157,13 @@ export class ToolSandbox {
   failTools: Set<string>;
   state: Record<string, unknown>;
   events: ToolEvent[] = [];
+  /**
+   * Per-rollout scratch space for YOUR agent's state (stores, clients,
+   * framework sessions): created fresh for every rollout and dies with it.
+   * `sandbox.context.world ??= makeWorld()` — never key external maps by
+   * anything derived from the sandbox's identity.
+   */
+  context: Record<string, unknown> = {};
 
   constructor(
     seed: number,
@@ -329,10 +336,17 @@ class Http {
       });
     const send = async () => {
       let r = await sendTo(url);
-      for (let hop = 0; hop < 5 && r.status === 303; hop++) {
+      for (let hop = 0; hop < 30 && r.status === 303; hop++) {
         const location = r.headers.get("location") ?? "";
         if (!location.includes("__modal_attempt_token")) break;
-        r = await sendTo(location);
+        // Async-poll pattern: GET awaits the already-accepted request's
+        // result; re-POSTing the body is rejected with a 400.
+        r = await fetch(location, {
+          method: "GET",
+          headers: this.headers,
+          signal: AbortSignal.timeout(300_000),
+          redirect: "manual",
+        });
       }
       return r;
     };

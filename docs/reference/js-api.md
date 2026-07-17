@@ -36,6 +36,11 @@ type RolloutAgent = (transcript: TranscriptTurn[], sandbox: ToolSandbox)
 // agent's earlier replies). Map "agent" to your stack's assistant role
 // before replaying history to your model — LLM APIs reject the literal
 // role "agent".
+
+// Stateful agents: keep per-conversation state in sandbox.context —
+// created fresh per rollout, dies with it. Never use module globals or
+// identity-keyed external maps; rollouts run concurrently. Frameworks
+// with their own memory should be fed only the newest transcript turn.
 ```
 
 If your agent is a chat-style handler, `fromChatHandler` in

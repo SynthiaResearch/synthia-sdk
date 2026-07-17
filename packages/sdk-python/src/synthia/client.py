@@ -94,17 +94,21 @@ class _RetryClient:
     def _follow_attempt_redirects(self, method, resp, **kwargs) -> httpx.Response:
         """Follow Modal's 303 attempt-token redirects (served while a
         deployment hands requests between containers). The redirect resumes
-        the SAME attempt via the token, so re-issuing the original method
-        and body is safe — including for turn-advance POSTs, which must
-        never be blindly retried but may be resumed. Without this, every
-        deploy kills every in-flight run."""
-        for _ in range(5):
+        the SAME attempt via the token: the original request was already
+        accepted, and a GET on the tokened URL awaits its result (async-
+        poll pattern) — safe for turn-advance POSTs because nothing is
+        resubmitted. Without this, every deploy kills every in-flight
+        run."""
+        del method, kwargs  # the original input was already accepted
+        for _ in range(30):
             if resp.status_code != 303:
                 return resp
             location = resp.headers.get("location", "")
             if "__modal_attempt_token" not in location:
                 return resp
-            resp = self._c.request(method, location, **kwargs)
+            # Async-poll pattern: GET the tokened URL to await the result
+            # of the already-submitted request. Re-POSTing is rejected 400.
+            resp = self._c.get(location)
         return resp
 
 # File suffixes treated as audio when a path is passed where content/replies
@@ -207,6 +211,12 @@ class ToolSandbox:
         self.fail_tools = fail_tools or set()
         self.state = dict(state or {})
         self.events: list[dict] = []
+        # Per-rollout scratch space for YOUR agent's state (stores, clients,
+        # framework sessions): created fresh for every rollout and dies with
+        # it. Use `sandbox.context.setdefault("world", make_world())` —
+        # never key external dicts by id(sandbox) (ids are recycled after
+        # GC and will hand a new rollout an old conversation's state).
+        self.context: dict = {}
 
     @classmethod
     def from_config(cls, config: "Mapping[str, Any]") -> "ToolSandbox":
