@@ -20,7 +20,7 @@ export type ApiToolCall = Api<"ToolCall">;
 export const DEFAULT_BASE_URL =
   "https://synthia-research--synthia-api-web.modal.run";
 
-const SDK_VERSION = "0.0.14"; // keep in lockstep with package.json
+const SDK_VERSION = "0.0.15"; // keep in lockstep with package.json
 // The server rejects quality checks over more rollouts than this
 // (MAX_QUALITY_ROLLOUTS); run() judges bigger result sets in chunks.
 const QUALITY_CHECK_CHUNK = 50;
@@ -313,14 +313,29 @@ class Http {
     for (const [k, v] of Object.entries(params ?? {})) {
       url.searchParams.set(k, String(v));
     }
-    const send = () =>
-      fetch(url, {
+    const sendTo = (target: string | URL) =>
+      fetch(target, {
         method,
         headers: { "content-type": "application/json", ...this.headers },
         body: body === undefined ? undefined : JSON.stringify(body),
         // Generous timeout: probe convergence runs model inference server-side.
         signal: AbortSignal.timeout(300_000),
+        // Manual: fetch would auto-follow a 303 as a GET, silently breaking
+        // POST semantics. Modal serves 303 attempt-token redirects while a
+        // deployment hands requests between containers; the token resumes
+        // the SAME attempt, so re-issuing the original method+body is safe —
+        // including turn-advance POSTs, which may be resumed, never retried.
+        redirect: "manual",
       });
+    const send = async () => {
+      let r = await sendTo(url);
+      for (let hop = 0; hop < 5 && r.status === 303; hop++) {
+        const location = r.headers.get("location") ?? "";
+        if (!location.includes("__modal_attempt_token")) break;
+        r = await sendTo(location);
+      }
+      return r;
+    };
 
     // A minutes-long CI run is many round trips against serverless infra that
     // can transiently blip — undici "fetch failed" (ETIMEDOUT/ECONNRESET) or a

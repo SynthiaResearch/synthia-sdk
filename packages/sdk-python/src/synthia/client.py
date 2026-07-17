@@ -79,6 +79,7 @@ class _RetryClient:
         for i in range(attempts):
             try:
                 resp = self._c.request(method, path, **kwargs)
+                resp = self._follow_attempt_redirects(method, resp, **kwargs)
             except httpx.TransportError:
                 if i == attempts - 1:
                     raise
@@ -89,6 +90,22 @@ class _RetryClient:
                 continue
             return resp
         raise AssertionError("unreachable")  # pragma: no cover
+
+    def _follow_attempt_redirects(self, method, resp, **kwargs) -> httpx.Response:
+        """Follow Modal's 303 attempt-token redirects (served while a
+        deployment hands requests between containers). The redirect resumes
+        the SAME attempt via the token, so re-issuing the original method
+        and body is safe — including for turn-advance POSTs, which must
+        never be blindly retried but may be resumed. Without this, every
+        deploy kills every in-flight run."""
+        for _ in range(5):
+            if resp.status_code != 303:
+                return resp
+            location = resp.headers.get("location", "")
+            if "__modal_attempt_token" not in location:
+                return resp
+            resp = self._c.request(method, location, **kwargs)
+        return resp
 
 # File suffixes treated as audio when a path is passed where content/replies
 # are overloaded (seeds.ingest, rollout agent replies accept audio too).
