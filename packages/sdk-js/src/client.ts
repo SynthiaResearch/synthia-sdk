@@ -23,7 +23,7 @@ export const DEFAULT_BASE_URL =
 const SDK_VERSION = "0.0.16"; // keep in lockstep with package.json
 // The server rejects quality checks over more rollouts than this
 // (MAX_QUALITY_ROLLOUTS); run() judges bigger result sets in chunks.
-const QUALITY_CHECK_CHUNK = 50;
+const QUALITY_CHECK_CHUNK = 500;
 
 // File suffixes treated as audio where inputs are overloaded (seeds.ingest
 // content, rollout agent replies).
@@ -1584,7 +1584,7 @@ export class Synthia {
         })),
       );
     }
-    // The server bounds one quality check's LLM fan-out at 50 rollouts;
+    // The server bounds one quality check's LLM fan-out (500 rollouts);
     // bigger runs judge in chunks and pool the evaluations. The outcome
     // carries the last check; every chunk lands on the platform.
     const chunks: RolloutResult[][] = [];

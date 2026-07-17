@@ -44,7 +44,7 @@ _RETRYABLE_STATUS = {500, 502, 503, 504, 429, 529}
 _CREATE_POSTS = ("/v1/sdk-sessions", "/v1/rollouts", "/v1/quality-checks")
 # The server rejects quality checks over more rollouts than this
 # (MAX_QUALITY_ROLLOUTS); run() judges bigger result sets in chunks.
-_QUALITY_CHECK_CHUNK = 50
+_QUALITY_CHECK_CHUNK = 500
 
 
 def _backoff(attempt: int) -> float:
@@ -1068,7 +1068,7 @@ class Synthia:
             results.extend(self.rollouts.run(
                 agent, target, max_turns=max_turns,
                 concurrency=concurrency, agent_meta=agent_meta))
-        # The server bounds one quality check's LLM fan-out at 50 rollouts;
+        # The server bounds one quality check's LLM fan-out (500 rollouts);
         # bigger runs judge in chunks and pool the evaluations. The outcome
         # carries the last check; every chunk lands on the platform.
         chunks = [results[i:i + _QUALITY_CHECK_CHUNK]
