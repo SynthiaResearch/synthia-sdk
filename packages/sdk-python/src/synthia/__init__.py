@@ -11,9 +11,8 @@ from .client import (
     ToolSandbox,
     UserModel,
     ValidationRun,
-    VoiceRender,
 )
 
 __all__ = ["Synthia", "UserModel", "GenerationJob", "Dataset", "AgentReply",
            "ToolCall", "ValidationRun", "QualityCheck", "RolloutResult",
-           "ToolSandbox", "PrepareResult", "VoiceRender", "EvalOutcome"]
+           "ToolSandbox", "PrepareResult", "EvalOutcome"]

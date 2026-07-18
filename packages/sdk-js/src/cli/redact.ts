@@ -71,7 +71,7 @@ export function redactingAgent(
     if (typeof reply !== "string") {
       if (!warnedAudio) {
         warnedAudio = true;
-        console.warn("warning: redaction does not apply to audio replies");
+        console.warn("warning: redaction does not apply to file replies");
       }
       return reply;
     }

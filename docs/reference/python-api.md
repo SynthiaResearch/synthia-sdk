@@ -45,15 +45,14 @@ check.wait(verbose=True)
 evaluations = check.rollouts()
 ```
 
-## `Synthia(api_key=None, base_url=None, session=None, voice=None, ci=None)`
+## `Synthia(api_key=None, base_url=None, session=None, ci=None)`
 
 Same option semantics as JS (`SYNTHIA_API_KEY` / `SYNTHIA_BASE_URL` /
 `SYNTHIA_SESSION` fallbacks, `session=False` for an ephemeral session,
-`voice=True/False` overriding the account's voice-auto mode, `ci` for CI
-provenance). Public attributes after construction: `session_name`,
-`session_id`, `invocation_id`, `voice_enabled`, `voice_auto`, `ci_settings`
-(a plain dict, or `None`), and the resources `seeds`, `user_models`,
-`datasets`, `rollouts`.
+`ci` for CI provenance). Public attributes after construction:
+`session_name`, `session_id`, `invocation_id`, `ci_settings` (a plain
+dict, or `None`), and the resources `seeds`, `user_models`, `datasets`,
+`rollouts`.
 
 **There is no `ready()`.** The session handshake runs synchronously inside
 `__init__`, so an invalid API key raises right there, and the
@@ -70,20 +69,20 @@ handshake-mirrored attributes are readable immediately after construction.
   `probe_agent` overrides. `reprobe=True` forces the full refresh —
   re-interview the agent, re-distill its context, generate a fresh
   batch — use when the agent changed.
-- **`prepare(agent, *, count=100, max_turns=10, min_success_rate=0.6, max_success_rate=0.9, reprobe=False, verbose=False, voice=False)`**
+- **`prepare(agent, *, count=100, max_turns=10, min_success_rate=0.6, max_success_rate=0.9, reprobe=False, verbose=False)`**
   → `PrepareResult` — identical decision rules to JS
   ([reuse vs regenerate](./js-api.md#await-synthiaprepareagent-options--prepareresult)).
   `PrepareResult` fields: `dataset`, `user_model`, `action`, `reason`,
-  `success_rate`, `quality_check_id`, `voice_renders`.
-- **`voice_render(*, scenario_id=None, rollout_id=None, takes=1, stability=None, annotate=False, phone_fx=False, room_tone=False, voice_overrides=None)`**
-  → `VoiceRender`.
+  `success_rate`, `quality_check_id`.
 
 ## Resources
 
 - **`client.seeds.ingest(*, kind, source, content, version="1", metadata=None)`**
-  — `content` overloaded exactly like JS: a dict is ingested as-is; `bytes`
-  or a `str`/`Path` ending in an audio suffix is uploaded and transcribed
-  (voice-enabled accounts).
+  — `content` overloaded exactly like JS: a dict is ingested as-is;
+  `bytes` or a `str`/`Path` to a file is uploaded and handled server-side
+  with zero parameters — audio (any common container) is transcribed and
+  marks the seed voice-origin; images, PDFs, and Office documents are
+  rendered to text natively.
 - **`client.user_models`** — `create_from_probe(agent, max_turns=10,
   verbose=False)`, `get(model_id)`, `list(session=None)`.
 - **`client.datasets`** — `generate(user_model, count=20, *,
@@ -94,13 +93,16 @@ handshake-mirrored attributes are readable immediately after construction.
   → `list[RolloutResult]`;
   `run_scenario(agent, scenario_id, *, ...)`;
   `quality_check(rollouts, label=None)` → `QualityCheck`;
-  `get(rollout_id)`; `voice(rollout, *, takes=1, ...)` → `VoiceRender`;
-  `turn_audio(rollout_id, idx)` → `bytes`.
+  `get(rollout_id)`; `turn_audio(rollout_id, idx)` → `bytes`. Voice is
+  zero-configuration modality mirroring ([semantics](./js-api.md#voice--zero-configuration)):
+  an audio reply flips its rollout into voice mode; on a voiced
+  `RolloutResult`, `voiced` is `True`, and `result.audio()` /
+  `result.save_audio(path)` fetch the server-attached mixed WAV.
 
 ## Jobs and `wait(...)`
 
-`GenerationJob`, `ValidationRun`, `QualityCheck`, and `VoiceRender` poll with
-keyword arguments instead of an options object:
+`GenerationJob`, `ValidationRun`, and `QualityCheck` poll with keyword
+arguments instead of an options object:
 
 ```python
 dataset = job.wait(poll_interval=2.0, timeout=1800.0, verbose=False)
@@ -109,9 +111,8 @@ dataset = job.wait(poll_interval=2.0, timeout=1800.0, verbose=False)
 Same semantics as JS `wait()`: polls until the job leaves `running`, raises
 on failure or timeout, streams server telemetry when `verbose=True`.
 `Dataset.download()`, `Dataset.validate(label=None)`,
-`Dataset.rollout(agent, **kwargs)`, `QualityCheck.rollouts()`,
-`ValidationRun.scenarios()`, `VoiceRender.audio()` / `save_audio(path)` all
-mirror their JS counterparts.
+`Dataset.rollout(agent, **kwargs)`, `QualityCheck.rollouts()`, and
+`ValidationRun.scenarios()` all mirror their JS counterparts.
 
 ## Agent contracts and `ToolSandbox`
 
@@ -125,8 +126,8 @@ where `role` is `"user"` (the simulated user) or `"agent"` (your agent's
 earlier replies) — map `"agent"` to your stack's assistant role before
 replaying history to your model; LLM APIs reject the literal role
 `"agent"`.
-Returning `bytes` or an audio-file `Path` sends audio (voice-enabled
-accounts). `ToolSandbox` is hash-identical to the JS and server sandboxes:
+Returning `bytes` or a file `Path` sends a file — audio flips the
+rollout into voice mode; images and documents are rendered to text. `ToolSandbox` is hash-identical to the JS and server sandboxes:
 `call(name, tool_input)`, `report(name, output, *, input=None,
 is_error=False)` (BYOE), `should_fail(name)`, `ToolSandbox.from_config(config)`,
 and the `seed` / `state` / `events` attributes — semantics in the

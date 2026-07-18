@@ -20,48 +20,43 @@ export type ApiToolCall = Api<"ToolCall">;
 export const DEFAULT_BASE_URL =
   "https://synthia-research--synthia-api-web.modal.run";
 
-const SDK_VERSION = "0.0.16"; // keep in lockstep with package.json
+const SDK_VERSION = "0.1.0"; // keep in lockstep with package.json
 // The server rejects quality checks over more rollouts than this
 // (MAX_QUALITY_ROLLOUTS); run() judges bigger result sets in chunks.
 const QUALITY_CHECK_CHUNK = 500;
 
-// File suffixes treated as audio where inputs are overloaded (seeds.ingest
-// content, rollout agent replies).
-const AUDIO_SUFFIXES = new Set([".wav", ".mp3", ".m4a", ".ogg", ".flac", ".webm"]);
+// File suffixes recognized where inputs are overloaded (seeds.ingest
+// content, rollout agent replies): a string ending in one of these is read
+// as a file path and uploaded; any other string is a text reply/content.
+// The server sniffs the actual type — audio (in any of these containers)
+// engages voice mode; images and documents are rendered to text.
+const FILE_SUFFIXES = new Set([
+  ".wav", ".mp3", ".m4a", ".ogg", ".flac", ".webm", ".aac", ".aiff",
+  ".png", ".jpg", ".jpeg", ".gif", ".webp",
+  ".pdf", ".docx", ".pptx", ".xlsx",
+]);
 
-/** Audio input for overloaded surfaces: raw bytes or a path to an audio file. */
-export type AudioInput = Uint8Array | string;
+/** File input for overloaded surfaces: raw bytes or a path to a file. */
+export type FileInput = Uint8Array | string;
 
 /**
- * base64 audio when `value` is audio — raw bytes, or a string path ending in
- * an audio suffix — else null. The runtime half of the input overloads.
+ * {file_b64, filename} when `value` is a file — raw bytes, or a string path
+ * ending in a recognized suffix — else null. The runtime half of the input
+ * overloads; the server sniffs the type, filename is only a hint.
  */
-function asAudioB64(value: unknown): string | null {
-  if (value instanceof Uint8Array) return Buffer.from(value).toString("base64");
-  if (typeof value === "string" && AUDIO_SUFFIXES.has(extname(value).toLowerCase())) {
-    return readFileSync(value).toString("base64");
+function asFileUpload(
+  value: unknown,
+): { file_b64: string; filename: string | null } | null {
+  if (value instanceof Uint8Array) {
+    return { file_b64: Buffer.from(value).toString("base64"), filename: null };
+  }
+  if (typeof value === "string" && FILE_SUFFIXES.has(extname(value).toLowerCase())) {
+    return {
+      file_b64: readFileSync(value).toString("base64"),
+      filename: basename(value),
+    };
   }
   return null;
-}
-
-/**
- * 403 on a voice surface means the account's config doesn't enable voice —
- * rethrow something actionable instead of a bare status error.
- */
-function translateVoice403(e: unknown): unknown {
-  if (e instanceof HttpError && e.status === 403) {
-    let detail = "voice is not enabled for this account";
-    try {
-      detail = JSON.parse(e.body).detail ?? detail;
-    } catch {
-      /* keep default */
-    }
-    return new Error(
-      `${detail} — voice is enabled per customer config; ask your Synthia ` +
-        "contact to turn it on for your organization",
-    );
-  }
-  return e;
 }
 
 // Launcher argv[1] stems that don't identify a script (REPLs, runners).
@@ -245,20 +240,22 @@ export class ToolSandbox {
 export interface TranscriptTurn {
   role: string;
   content: string;
-  /** Set on voiced turns (voice-enabled accounts); fetch via
-   * Rollouts.turnAudio. */
+  /** Set on turns that carry audio (every simulated-user turn of a
+   * voice-mode rollout, and agent turns that replied with audio); fetch
+   * via Rollouts.turnAudio. */
   audio_url?: string | null;
 }
 
 // A rollout agent takes the conversation transcript and a ToolSandbox for
-// its tool calls, and returns its reply — text, or audio (bytes / a path to
-// an audio file; voice-enabled accounts: the server transcribes it and the
-// transcript drives the simulator). Scenarios may run concurrently, so it
-// must not share mutable state across invocations.
+// its tool calls, and returns its reply — text, or a file (bytes / a path).
+// Audio replies flip the rollout into voice mode (the server talks back in
+// audio); image/document replies are rendered to text. Either way the
+// server-extracted text drives the simulator. Scenarios may run
+// concurrently, so it must not share mutable state across invocations.
 export type RolloutAgent = (
   transcript: TranscriptTurn[],
   sandbox: ToolSandbox,
-) => string | AudioInput | Promise<string | AudioInput>;
+) => string | FileInput | Promise<string | FileInput>;
 
 class HttpError extends Error {
   constructor(
@@ -634,33 +631,29 @@ export class Seeds {
    * Upload seed material (documents, tool schemas, policies, traces...).
    *
    * Overloaded on `content`: an object is ingested as-is (text pipeline);
-   * raw bytes or a path to an audio file (.wav/.mp3/...) is uploaded and
-   * transcribed server-side (voice-enabled accounts only) — the transcript
-   * becomes the seed content.
+   * raw bytes or a path to a file (audio in any common container, an
+   * image, a PDF/Office document, plain text) is uploaded and handled
+   * server-side with zero parameters — audio is transcribed (and marks
+   * the seed voice-origin: rollouts on scenarios built from it run in
+   * voice mode), everything else is rendered to text.
    */
   async ingest(opts: {
     kind: string;
     source: string;
-    content: Record<string, unknown> | AudioInput;
+    content: Record<string, unknown> | FileInput;
     version?: string;
     metadata?: Record<string, unknown>;
   }): Promise<Seed> {
-    const audioB64 = asAudioB64(opts.content);
-    if (audioB64 !== null) {
-      const filename =
-        typeof opts.content === "string" ? basename(opts.content) : null;
-      try {
-        return await this.#http.post<Seed>("/v1/seeds", {
-          kind: opts.kind,
-          source: opts.source,
-          audio_b64: audioB64,
-          audio_filename: filename,
-          version: opts.version ?? "1",
-          metadata: opts.metadata ?? {},
-        });
-      } catch (e) {
-        throw translateVoice403(e);
-      }
+    const upload = asFileUpload(opts.content);
+    if (upload !== null) {
+      return this.#http.post<Seed>("/v1/seeds", {
+        kind: opts.kind,
+        source: opts.source,
+        file_b64: upload.file_b64,
+        filename: upload.filename,
+        version: opts.version ?? "1",
+        metadata: opts.metadata ?? {},
+      });
     }
     return this.#http.post<Seed>("/v1/seeds", {
       kind: opts.kind,
@@ -796,9 +789,6 @@ export interface PrepareResult {
   reason: string; // human-readable decision trail
   successRate: number | null; // latest completed check's rate, if any
   qualityCheckId: string | null; // check that calibrated generation, if any
-  /** Running render handles when prepare({voice: true}) pre-voiced the
-   * scenarios. */
-  voiceRenders?: VoiceRender[];
 }
 
 /**
@@ -866,115 +856,39 @@ export class QualityCheck {
 }
 
 /**
- * An async voice render: a scenario (LLM-authored script) or a rollout
- * transcript, voiced with ElevenLabs — N takes spliced into one mixed WAV
- * with per-turn provenance. Requires a voice-enabled customer config.
+ * Poll a server-attached voice render until it finishes, then download the
+ * mixed conversation WAV. Voice-mode rollouts get their render created
+ * server-side on completion — the SDK only fetches it.
  */
-export class VoiceRender {
-  id: string;
-  status: string;
-  scenario_id: string | null;
-  rollout_id: string | null;
-  params: Record<string, unknown>;
-  duration_ms: number | null;
-  wpm: number | null;
-  provenance: Record<string, unknown>[] | null;
-  error: string | null;
-  #http: Http;
-
-  constructor(data: Api<"VoiceRender">, http: Http) {
-    this.id = data.id;
-    this.status = data.status;
-    this.scenario_id = data.scenario_id ?? null;
-    this.rollout_id = data.rollout_id ?? null;
-    this.params = data.params ?? {};
-    this.duration_ms = data.duration_ms ?? null;
-    this.wpm = data.wpm ?? null;
-    this.provenance = data.provenance ?? null;
-    this.error = data.error ?? null;
-    this.#http = http;
-  }
-
-  /** Poll until the render finishes; verbose prints server telemetry
-   * (per-TTS-call latencies, take/mix progress). */
-  async wait(opts: WaitOptions = {}): Promise<VoiceRender> {
-    const { pollInterval = 2, timeout = 1800, verbose = false } = opts;
-    const events = new EventStream(
-      this.#http,
-      `/v1/voice-renders/${this.id}/events`,
-      verbose,
-    );
-    const deadline = Date.now() + timeout * 1000;
-    while (this.status === "running") {
-      if (Date.now() > deadline) {
-        throw new Error(
-          `voice render ${this.id} still running after ${timeout}s`,
-        );
-      }
-      await sleep(pollInterval * 1000);
-      const data = await this.#http.get<Api<"VoiceRender">>(
-        `/v1/voice-renders/${this.id}`,
-      );
-      this.status = data.status;
-      this.params = data.params ?? {};
-      this.duration_ms = data.duration_ms ?? null;
-      this.wpm = data.wpm ?? null;
-      this.provenance = data.provenance ?? null;
-      this.error = data.error ?? null;
-      await events.pump();
-    }
-    await events.pump(); // catch events written after the final status poll
-    if (this.status !== "succeeded") {
-      throw new Error(`voice render ${this.id} failed: ${this.error}`);
-    }
-    return this;
-  }
-
-  /** The mixed conversation WAV. */
-  async audio(): Promise<Uint8Array> {
-    try {
-      return await this.#http.getBytes(`/v1/voice-renders/${this.id}/audio`);
-    } catch (e) {
-      throw translateVoice403(e);
-    }
-  }
-
-  /** Write the mixed conversation WAV to `path`; returns it. */
-  async saveAudio(path: string): Promise<string> {
-    writeFileSync(path, await this.audio());
-    return path;
-  }
-}
-
-export interface VoiceOptions {
-  takes?: number;
-  /** 0..1; lower = more expressive delivery. Default: config, then 0.35. */
-  stability?: number;
-  annotate?: boolean;
-  phoneFx?: boolean;
-  roomTone?: boolean;
-  voiceOverrides?: Record<string, string>;
-}
-
-async function createVoiceRender(
+async function fetchRenderAudio(
   http: Http,
-  body: Record<string, unknown>,
-): Promise<VoiceRender> {
-  const clean = Object.fromEntries(
-    Object.entries(body).filter(([, v]) => v !== undefined && v !== null),
+  renderId: string,
+  opts: WaitOptions = {},
+): Promise<Uint8Array> {
+  const { pollInterval = 2, timeout = 1800 } = opts;
+  const deadline = Date.now() + timeout * 1000;
+  let render = await http.get<Api<"VoiceRender">>(
+    `/v1/voice-renders/${renderId}`,
   );
-  try {
-    return new VoiceRender(await http.post("/v1/voice-renders", clean), http);
-  } catch (e) {
-    throw translateVoice403(e);
+  while (render.status === "running") {
+    if (Date.now() > deadline) {
+      throw new Error(`voice render ${renderId} still running after ${timeout}s`);
+    }
+    await sleep(pollInterval * 1000);
+    render = await http.get<Api<"VoiceRender">>(`/v1/voice-renders/${renderId}`);
   }
+  if (render.status !== "succeeded") {
+    throw new Error(`voice render ${renderId} failed: ${render.error}`);
+  }
+  return http.getBytes(`/v1/voice-renders/${renderId}/audio`);
 }
 
 /**
  * One finished rollout: the conversation a scenario produced, plus every
  * tool call the agent made along the way (each tagged with its turn_idx).
- * voice_render is attached (already running) when the account's config has
- * voice.auto — await .wait()/.saveAudio() on it if you want the WAV.
+ * voiced rollouts (the agent interacted through audio, or the scenario is
+ * voice-origin) carry audio on every simulated-user turn and a
+ * server-attached mixed render — call audio() for the WAV.
  */
 export interface RolloutResult {
   rollout_id: string;
@@ -983,7 +897,13 @@ export interface RolloutResult {
   turns: number;
   transcript: TranscriptTurn[];
   tool_events: ApiToolCall[];
-  voice_render?: VoiceRender | null;
+  /** Voice mode: true when the rollout ran with voiced replies. */
+  voiced: boolean;
+  /** The server-attached mixed render's id (voiced rollouts). */
+  voice_render_id?: string | null;
+  /** Download the mixed conversation WAV (waits for the render). Present
+   * only on voiced rollouts. */
+  audio?: (opts?: WaitOptions) => Promise<Uint8Array>;
 }
 
 export interface RunOptions {
@@ -1001,16 +921,10 @@ export interface RunOptions {
 export class Rollouts {
   #http: Http;
   #sessionId: string | null;
-  #voiceAuto: boolean;
 
-  constructor(
-    http: Http,
-    sessionId: string | null = null,
-    voiceAuto = false,
-  ) {
+  constructor(http: Http, sessionId: string | null = null) {
     this.#http = http;
     this.#sessionId = sessionId;
-    this.#voiceAuto = voiceAuto;
   }
 
   /**
@@ -1021,37 +935,9 @@ export class Rollouts {
     return this.#http.get<ApiRollout>(`/v1/rollouts/${rolloutId}`);
   }
 
-  /**
-   * Voice a finished rollout: the transcript maps to a script
-   * deterministically (words verbatim; `annotate` may add delivery tags
-   * only), then N takes are rendered and spliced into one mixed WAV.
-   * Requires a voice-enabled customer config (throws otherwise).
-   */
-  async voice(
-    rollout: RolloutResult | string,
-    opts: VoiceOptions = {},
-  ): Promise<VoiceRender> {
-    const rolloutId = typeof rollout === "string" ? rollout : rollout.rollout_id;
-    return createVoiceRender(this.#http, {
-      rollout_id: rolloutId,
-      takes: opts.takes ?? 1,
-      stability: opts.stability,
-      annotate: opts.annotate ?? false,
-      phone_fx: opts.phoneFx ?? false,
-      room_tone: opts.roomTone ?? false,
-      voice_overrides: opts.voiceOverrides,
-    });
-  }
-
-  /** One voiced turn's WAV (turns with an audio_url only). */
+  /** One turn's audio (turns with an audio_url only). */
   async turnAudio(rolloutId: string, idx: number): Promise<Uint8Array> {
-    try {
-      return await this.#http.getBytes(
-        `/v1/rollouts/${rolloutId}/turns/${idx}/audio`,
-      );
-    } catch (e) {
-      throw translateVoice403(e);
-    }
+    return this.#http.getBytes(`/v1/rollouts/${rolloutId}/turns/${idx}/audio`);
   }
 
   /**
@@ -1118,20 +1004,6 @@ export class Rollouts {
     await Promise.all(
       Array.from({ length: Math.min(concurrency, rows.length) }, worker),
     );
-    if (this.#voiceAuto) {
-      // voice.auto accounts: every completed rollout gets a takes=1 mixed
-      // render, kicked here and attached still-running — audio is ready
-      // server-side whether or not anyone awaits it.
-      for (const result of results) {
-        if (result.status === "completed") {
-          try {
-            result.voice_render = await this.voice(result, { takes: 1 });
-          } catch {
-            /* rendering is a bonus; results stand alone */
-          }
-        }
-      }
-    }
     return results;
   }
 
@@ -1141,7 +1013,7 @@ export class Rollouts {
    * rollout: if its turn count moved past `priorTurn`, the write landed (only
    * the response was lost) — adopt that state. If it's unchanged and still
    * running, the write didn't land — it's safe to re-send once. A genuine 4xx
-   * (409 already-completed, 422 bad turn, 403 voice) is rethrown unchanged.
+   * (409 already-completed, 422 bad file/turn) is rethrown unchanged.
    */
   async #recoverTurn(
     rolloutId: string,
@@ -1218,13 +1090,16 @@ export class Rollouts {
         sandbox.events = [];
       }
       const reply = await agent(session.transcript, sandbox);
-      const audioB64 = asAudioB64(reply);
+      const upload = asFileUpload(reply);
       const body: Record<string, unknown> = { tool_calls: sandbox.events };
-      if (audioB64 !== null) {
-        // The agent replied with audio — the server transcribes it
-        // (voice-enabled accounts) and the transcript drives the simulator.
+      if (upload !== null) {
+        // The agent replied with a file — the server sniffs it: audio is
+        // transcribed and flips the rollout into voice mode; images and
+        // documents are rendered to text. The extracted text drives the
+        // simulator either way.
         body["reply"] = "";
-        body["audio_b64"] = audioB64;
+        body["file_b64"] = upload.file_b64;
+        body["filename"] = upload.filename;
       } else {
         body["reply"] = reply;
       }
@@ -1239,18 +1114,25 @@ export class Rollouts {
           body,
         );
       } catch (e) {
-        if (audioB64 !== null) throw translateVoice403(e);
         session = await this.#recoverTurn(session.id, priorTurn, body, e);
       }
     }
-    return {
+    const result: RolloutResult = {
       rollout_id: session.id,
       scenario_id: scenarioId,
       status: session.status,
       turns: session.turn,
       transcript: session.transcript,
       tool_events: session.tool_events,
+      voiced: session.voiced ?? false,
+      voice_render_id: session.voice_render_id ?? null,
     };
+    const renderId = result.voice_render_id;
+    if (renderId) {
+      result.audio = (opts?: WaitOptions) =>
+        fetchRenderAudio(this.#http, renderId, opts);
+    }
+    return result;
   }
 }
 
@@ -1258,19 +1140,13 @@ export interface SynthiaOptions {
   apiKey?: string;
   baseUrl?: string;
   session?: string | false;
-  /** Override the config-mirrored voice mode for this client: true behaves
-   * like a voice.auto account — every completed rollout gets a mixed-WAV
-   * render attached (requires a voice-enabled config; the handshake rejects
-   * otherwise) — and false keeps rollouts text-only even when the config
-   * says auto. Omit to follow the account's customer config. */
-  voice?: boolean;
   /** CI provenance for this process (commit sha, branch, ...), sent on the
    * session handshake and stamped onto every run this invocation creates.
    * Set by `synthia run`; reporting only. */
   ci?: Record<string, unknown>;
 }
 
-/** The customer config's CI policy, mirrored on the handshake (like voice):
+/** The customer config's CI policy, mirrored on the handshake:
  * floors/caps `synthia run` applies to its yaml config with a warning. */
 export interface CiSettings {
   pass_rate_floor?: number | null;
@@ -1288,12 +1164,6 @@ export interface PrepareOptions {
    * domain changed. Skips every reuse check. */
   reprobe?: boolean;
   verbose?: boolean;
-  /** Additionally voice every scenario in the prepared dataset (an LLM
-   * authors each script, then a takes=1 render) — explicit opt-in because
-   * it spends per row; handles come back still-running on
-   * PrepareResult.voiceRenders. voice.auto accounts don't need this:
-   * their rollouts voice themselves. */
-  voice?: boolean;
 }
 
 export interface EvalOptions {
@@ -1373,12 +1243,6 @@ export class Synthia {
   sessionName: string;
   sessionId: string | null = null;
   invocationId: string | null = null;
-  /** Voice mode, mirrored from the account's customer config by the
-   * session handshake: enabled unlocks the voice surfaces; auto makes
-   * rollouts voice themselves. The `voice` option overrides the
-   * config-mirrored auto default for this client (see SynthiaOptions). */
-  voiceEnabled = false;
-  voiceAuto = false;
   /** CI floors/caps mirrored from the customer config by the handshake;
    * null when the account has no CI policy. Populated after ready(). */
   ciSettings: CiSettings | null = null;
@@ -1387,7 +1251,6 @@ export class Synthia {
   datasets: Datasets;
   rollouts: Rollouts;
   #http: Http;
-  #voiceOverride: boolean | null;
   #ci: Record<string, unknown> | null;
 
   constructor(options: SynthiaOptions = {}) {
@@ -1408,7 +1271,6 @@ export class Synthia {
       this.sessionName =
         process.env["SYNTHIA_SESSION"] || defaultSessionName();
     }
-    this.#voiceOverride = options.voice ?? null;
     this.#ci = options.ci ?? null;
     // The handshake gates every later request, so all of them carry the
     // session headers without callers having to await anything up front.
@@ -1416,13 +1278,13 @@ export class Synthia {
     this.seeds = new Seeds(this.#http);
     this.userModels = new UserModels(this.#http);
     this.datasets = new Datasets(this.#http);
-    this.rollouts = new Rollouts(this.#http, null, options.voice ?? false);
+    this.rollouts = new Rollouts(this.#http);
   }
 
   /**
    * Await the session handshake. Every request already waits on it
    * implicitly; call this to fail fast on a bad key and to read the
-   * handshake-mirrored fields (ciSettings, voiceEnabled) before acting.
+   * handshake-mirrored fields (ciSettings) before acting.
    */
   async ready(): Promise<void> {
     await this.#http.ready;
@@ -1471,43 +1333,10 @@ export class Synthia {
     const data = (await r.json()) as Api<"SdkSession">;
     this.sessionId = data.sdk_session_id;
     this.invocationId = data.sdk_invocation_id;
-    this.voiceEnabled = data.voice_enabled ?? false;
-    this.voiceAuto = data.voice_auto ?? false;
     this.ciSettings = data.ci ?? null;
-    if (this.#voiceOverride !== null) {
-      if (this.#voiceOverride && !this.voiceEnabled) {
-        // Surfaces on the caller's first awaited request, like a bad apiKey.
-        throw new Error(
-          "voice: true but voice is not enabled for this account — voice " +
-            "is enabled per customer config; ask your Synthia contact to " +
-            "turn it on for your organization",
-        );
-      }
-      this.voiceAuto = this.#voiceOverride;
-    }
     this.#http.headers["X-Synthia-Session"] = this.sessionId!;
     this.#http.headers["X-Synthia-Invocation"] = this.invocationId!;
-    this.rollouts = new Rollouts(this.#http, this.sessionId, this.voiceAuto);
-  }
-
-  /**
-   * Voice one scenario (an LLM authors the full two-sided script) or one
-   * finished rollout (deterministic transcript transform). Exactly one
-   * source id. Requires a voice-enabled customer config.
-   */
-  async voiceRender(
-    opts: VoiceOptions & { scenarioId?: string; rolloutId?: string },
-  ): Promise<VoiceRender> {
-    return createVoiceRender(this.#http, {
-      scenario_id: opts.scenarioId,
-      rollout_id: opts.rolloutId,
-      takes: opts.takes ?? 1,
-      stability: opts.stability,
-      annotate: opts.annotate ?? false,
-      phone_fx: opts.phoneFx ?? false,
-      room_tone: opts.roomTone ?? false,
-      voice_overrides: opts.voiceOverrides,
-    });
+    this.rollouts = new Rollouts(this.#http, this.sessionId);
   }
 
   /**
@@ -1529,16 +1358,7 @@ export class Synthia {
    * scripts/sessions never trigger regeneration here.
    */
   async prepare(agent: Agent, opts: PrepareOptions = {}): Promise<PrepareResult> {
-    const result = await this.#prepare(agent, opts);
-    if (opts.voice) {
-      result.voiceRenders = [];
-      for (const row of await result.dataset.download()) {
-        result.voiceRenders.push(
-          await this.voiceRender({ scenarioId: row.scenario_id, takes: 1 }),
-        );
-      }
-    }
-    return result;
+    return this.#prepare(agent, opts);
   }
 
   /**

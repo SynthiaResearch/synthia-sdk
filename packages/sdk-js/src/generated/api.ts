@@ -1248,6 +1248,13 @@ export interface components {
              * @default []
              */
             tool_events: components["schemas"]["ToolCall"][];
+            /**
+             * Voiced
+             * @default false
+             */
+            voiced: boolean;
+            /** Voice Render Id */
+            voice_render_id?: string | null;
         };
         /** RolloutCreate */
         RolloutCreate: {
@@ -1388,8 +1395,10 @@ export interface components {
              * @default []
              */
             tool_calls: components["schemas"]["ToolCall"][];
-            /** Audio B64 */
-            audio_b64?: string | null;
+            /** File B64 */
+            file_b64?: string | null;
+            /** Filename */
+            filename?: string | null;
         };
         /** RunDetail */
         RunDetail: {
@@ -1515,16 +1524,6 @@ export interface components {
             sdk_invocation_id: string;
             /** Name */
             name: string;
-            /**
-             * Voice Enabled
-             * @default false
-             */
-            voice_enabled: boolean;
-            /**
-             * Voice Auto
-             * @default false
-             */
-            voice_auto: boolean;
             ci?: components["schemas"]["CiSettings"] | null;
         };
         /** SdkSessionCreate */
@@ -1597,10 +1596,10 @@ export interface components {
             metadata: {
                 [key: string]: unknown;
             };
-            /** Audio B64 */
-            audio_b64?: string | null;
-            /** Audio Filename */
-            audio_filename?: string | null;
+            /** File B64 */
+            file_b64?: string | null;
+            /** Filename */
+            filename?: string | null;
         };
         /** ToolCall */
         ToolCall: {

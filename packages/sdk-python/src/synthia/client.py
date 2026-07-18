@@ -111,32 +111,27 @@ class _RetryClient:
             resp = self._c.get(location)
         return resp
 
-# File suffixes treated as audio when a path is passed where content/replies
-# are overloaded (seeds.ingest, rollout agent replies accept audio too).
-_AUDIO_SUFFIXES = {".wav", ".mp3", ".m4a", ".ogg", ".flac", ".webm"}
+# File suffixes recognized when a path is passed where content/replies are
+# overloaded (seeds.ingest, rollout agent replies): a string/Path ending in
+# one of these is read and uploaded; any other string is text. The server
+# sniffs the actual type — audio (in any of these containers) engages voice
+# mode; images and documents are rendered to text.
+_FILE_SUFFIXES = {".wav", ".mp3", ".m4a", ".ogg", ".flac", ".webm", ".aac",
+                  ".aiff", ".png", ".jpg", ".jpeg", ".gif", ".webp",
+                  ".pdf", ".docx", ".pptx", ".xlsx"}
 
 
-def _as_audio_bytes(value) -> "tuple[bytes, str | None] | None":
-    """(audio bytes, filename) when `value` is audio — raw bytes or a path to
-    an audio file — else None. This is the runtime half of the overloads."""
+def _as_file_bytes(value) -> "tuple[bytes, str | None] | None":
+    """(file bytes, filename) when `value` is a file — raw bytes or a path
+    ending in a recognized suffix — else None. The runtime half of the
+    overloads; the server sniffs the type, filename is only a hint."""
     if isinstance(value, (bytes, bytearray)):
         return bytes(value), None
     if isinstance(value, (str, Path)):
         p = Path(value)
-        if p.suffix.lower() in _AUDIO_SUFFIXES:
+        if p.suffix.lower() in _FILE_SUFFIXES:
             return p.read_bytes(), p.name
     return None
-
-
-def _raise_for_voice(r: httpx.Response) -> None:
-    """403 on a voice surface means the account's config doesn't enable
-    voice — raise something actionable instead of a bare status error."""
-    if r.status_code == 403:
-        detail = r.json().get("detail", "voice is not enabled for this account")
-        raise RuntimeError(
-            f"{detail} — voice is enabled per customer config; ask your "
-            "Synthia contact to turn it on for your organization")
-    r.raise_for_status()
 
 # Launcher argv[0] values that don't identify a script (notebooks, REPLs).
 _INTERACTIVE_STEMS = {"", "-c", "-m", "ipykernel_launcher", "pydevconsole"}
@@ -266,11 +261,12 @@ class ToolSandbox:
 
 
 # A rollout agent takes the conversation transcript ([{role, content}]) and a
-# ToolSandbox for its tool calls, and returns its reply — text, or audio
-# bytes / a path to an audio file (voice-enabled accounts: the server
-# transcribes it and the transcript drives the simulator). It is invoked
+# ToolSandbox for its tool calls, and returns its reply — text, or a file
+# (bytes / a path). Audio replies flip the rollout into voice mode (the
+# server talks back in audio); image/document replies are rendered to text.
+# Either way the server-extracted text drives the simulator. It is invoked
 # from worker threads when rollouts run concurrently, so it must be
-# thread-safe. Voiced simulated-user turns carry an `audio_url` on their
+# thread-safe. Turns that carry audio expose an `audio_url` on their
 # transcript entries (fetch via Rollouts.turn_audio).
 RolloutAgent = Callable[[list, ToolSandbox], Union[str, bytes, Path]]
 
@@ -440,25 +436,27 @@ class Seeds:
         """Upload seed material (documents, tool schemas, policies, traces...).
 
         Overloaded on `content`: a dict is ingested as-is (text pipeline);
-        raw bytes or a path to an audio file (.wav/.mp3/...) is uploaded and
-        transcribed server-side (voice-enabled accounts only) — the
-        transcript becomes the seed content.
+        raw bytes or a path to a file (audio in any common container, an
+        image, a PDF/Office document) is uploaded and handled server-side
+        with zero parameters — audio is transcribed (and marks the seed
+        voice-origin: rollouts on scenarios built from it run in voice
+        mode), everything else is rendered to text.
         """
-        audio = _as_audio_bytes(content)
-        if audio is not None:
-            data, filename = audio
+        upload = _as_file_bytes(content)
+        if upload is not None:
+            data, filename = upload
             r = self._http.post("/v1/seeds", json={
                 "kind": kind, "source": source,
-                "audio_b64": base64.b64encode(data).decode(),
-                "audio_filename": filename,
+                "file_b64": base64.b64encode(data).decode(),
+                "filename": filename,
                 "version": version, "metadata": metadata or {},
             })
-            _raise_for_voice(r)
+            r.raise_for_status()
             return r.json()
         if not isinstance(content, dict):
             raise TypeError(
-                "content must be a dict, or audio bytes / a path to an "
-                f"audio file ({', '.join(sorted(_AUDIO_SUFFIXES))})")
+                "content must be a dict, or file bytes / a path to a "
+                f"file ({', '.join(sorted(_FILE_SUFFIXES))})")
         r = self._http.post("/v1/seeds", json={
             "kind": kind, "source": source, "content": content,
             "version": version, "metadata": metadata or {},
@@ -543,15 +541,13 @@ class Datasets:
 @dataclass
 class PrepareResult:
     """Outcome of Synthia.prepare(): the dataset to roll out, the user model
-    behind it, and how the decision was made. voice_renders holds running
-    render handles when prepare(voice=True) pre-voiced the scenarios."""
+    behind it, and how the decision was made."""
     dataset: Dataset
     user_model: UserModel
     action: str                     # "generated" | "reused"
     reason: str                     # human-readable decision trail
     success_rate: float | None      # latest completed check's rate, if any
     quality_check_id: str | None    # check that calibrated generation, if any
-    voice_renders: "list[VoiceRender]" = field(default_factory=list)
 
 
 @dataclass
@@ -596,79 +592,65 @@ class QualityCheck:
         return r.json()["data"]
 
 
-@dataclass
-class VoiceRender:
-    """An async voice render: a scenario (LLM-authored script) or a rollout
-    transcript, voiced with ElevenLabs — N takes spliced into one mixed WAV
-    with per-turn provenance. Requires a voice-enabled customer config."""
-    id: str
-    status: str
-    scenario_id: str | None
-    rollout_id: str | None
-    params: dict
-    duration_ms: int | None
-    wpm: float | None
-    provenance: list[dict] | None
-    error: str | None
-    _http: httpx.Client
-
-    def wait(self, poll_interval: float = 2.0, timeout: float = 1800.0,
-             verbose: bool = False) -> "VoiceRender":
-        """Poll until the render finishes; verbose prints server telemetry
-        (per-TTS-call latencies, take/mix progress)."""
-        events = _EventStream(
-            self._http, f"/v1/voice-renders/{self.id}/events", verbose)
-        deadline = time.monotonic() + timeout
-        while self.status == "running":
-            if time.monotonic() > deadline:
-                raise TimeoutError(
-                    f"voice render {self.id} still running after {timeout}s")
-            time.sleep(poll_interval)
-            r = self._http.get(f"/v1/voice-renders/{self.id}")
-            r.raise_for_status()
-            data = r.json()
-            for key in ("status", "params", "duration_ms", "wpm",
-                        "provenance", "error"):
-                setattr(self, key, data[key])
-            events.pump()
-        events.pump()  # catch events written after the final status poll
-        if self.status != "succeeded":
-            raise RuntimeError(f"voice render {self.id} failed: {self.error}")
-        return self
-
-    def audio(self) -> bytes:
-        """The mixed conversation WAV."""
-        r = self._http.get(f"/v1/voice-renders/{self.id}/audio")
-        _raise_for_voice(r)
-        return r.content
-
-    def save_audio(self, path: Union[str, Path]) -> Path:
-        """Write the mixed conversation WAV to `path`; returns it."""
-        p = Path(path)
-        p.write_bytes(self.audio())
-        return p
-
-
-def _create_voice_render(http: httpx.Client, body: dict) -> VoiceRender:
-    r = http.post("/v1/voice-renders",
-                  json={k: v for k, v in body.items() if v is not None})
-    _raise_for_voice(r)
-    return _build(VoiceRender, r.json(), _http=http)
+def _fetch_render_audio(http: httpx.Client, render_id: str,
+                        poll_interval: float = 2.0,
+                        timeout: float = 1800.0) -> bytes:
+    """Poll a server-attached voice render until it finishes, then download
+    the mixed conversation WAV. Voice-mode rollouts get their render created
+    server-side on completion — the SDK only fetches it."""
+    deadline = time.monotonic() + timeout
+    while True:
+        r = http.get(f"/v1/voice-renders/{render_id}")
+        r.raise_for_status()
+        data = r.json()
+        if data["status"] != "running":
+            break
+        if time.monotonic() > deadline:
+            raise TimeoutError(
+                f"voice render {render_id} still running after {timeout}s")
+        time.sleep(poll_interval)
+    if data["status"] != "succeeded":
+        raise RuntimeError(
+            f"voice render {render_id} failed: {data['error']}")
+    r = http.get(f"/v1/voice-renders/{render_id}/audio")
+    r.raise_for_status()
+    return r.content
 
 
 @dataclass
 class RolloutResult:
     """One finished rollout: the conversation a scenario produced, plus every
     tool call the agent made along the way (each tagged with its turn_idx).
-    voice_render is attached (already running) when the account's config has
-    voice.auto — call .wait()/.save_audio() on it if you want the WAV."""
+    voiced rollouts (the agent interacted through audio, or the scenario is
+    voice-origin) carry audio on every simulated-user turn and a
+    server-attached mixed render — call audio() for the WAV."""
     rollout_id: str
     scenario_id: str
     status: str
     turns: int
     transcript: "list[ApiTranscriptTurn]"
     tool_events: "list[ApiToolCall]"
-    voice_render: "VoiceRender | None" = None
+    voiced: bool = False
+    voice_render_id: str | None = None
+    _http: "httpx.Client | None" = None
+
+    def audio(self, poll_interval: float = 2.0,
+              timeout: float = 1800.0) -> bytes:
+        """The mixed conversation WAV (waits for the server-attached
+        render). Voiced rollouts only."""
+        if self.voice_render_id is None or self._http is None:
+            raise RuntimeError(
+                "this rollout is not voiced — audio is attached only when "
+                "the agent interacts through voice (or the scenario is "
+                "voice-origin)")
+        return _fetch_render_audio(self._http, self.voice_render_id,
+                                   poll_interval, timeout)
+
+    def save_audio(self, path: Union[str, Path]) -> Path:
+        """Write the mixed conversation WAV to `path`; returns it."""
+        p = Path(path)
+        p.write_bytes(self.audio())
+        return p
 
 
 @dataclass
@@ -683,11 +665,9 @@ class EvalOutcome:
 
 
 class Rollouts:
-    def __init__(self, http: httpx.Client, session_id: str | None = None,
-                 voice_auto: bool = False):
+    def __init__(self, http: httpx.Client, session_id: str | None = None):
         self._http = http
         self._session_id = session_id
-        self._voice_auto = voice_auto
 
     def get(self, rollout_id: str) -> Rollout:
         """A stored rollout's full captured state: status, seed, transcript,
@@ -696,29 +676,10 @@ class Rollouts:
         r.raise_for_status()
         return r.json()
 
-    def voice(self, rollout: "Union[RolloutResult, str]", *,
-              takes: int = 1, stability: float | None = None,
-              annotate: bool = False, phone_fx: bool = False,
-              room_tone: bool = False,
-              voice_overrides: dict | None = None) -> VoiceRender:
-        """Voice a finished rollout: the transcript maps to a script
-        deterministically (words verbatim; `annotate` may add delivery tags
-        only), then N takes are rendered and spliced into one mixed WAV.
-        Voices are cast from the scenario unless overridden; `stability`
-        (0..1) trades consistency for expressiveness. Requires a
-        voice-enabled customer config (403 otherwise)."""
-        rollout_id = (rollout.rollout_id
-                      if isinstance(rollout, RolloutResult) else rollout)
-        return _create_voice_render(self._http, {
-            "rollout_id": rollout_id, "takes": takes, "stability": stability,
-            "annotate": annotate, "phone_fx": phone_fx,
-            "room_tone": room_tone,
-            "voice_overrides": voice_overrides})
-
     def turn_audio(self, rollout_id: str, idx: int) -> bytes:
-        """One voiced turn's WAV (turns with an audio_url only)."""
+        """One turn's audio (turns with an audio_url only)."""
         r = self._http.get(f"/v1/rollouts/{rollout_id}/turns/{idx}/audio")
-        _raise_for_voice(r)
+        r.raise_for_status()
         return r.content
 
     def run(self, agent: RolloutAgent, dataset: Union[Dataset, str, None] = None,
@@ -769,16 +730,6 @@ class Rollouts:
                     random_seed=row.get("random_seed"),
                     agent_meta=agent_meta, dataset_id=dataset_id),
                 rows))
-        if self._voice_auto:
-            # voice.auto accounts: every completed rollout gets a takes=1
-            # mixed render, kicked here and attached still-running — audio
-            # is ready server-side whether or not anyone .wait()s.
-            for result in results:
-                if result.status == "completed":
-                    try:
-                        result.voice_render = self.voice(result, takes=1)
-                    except Exception:
-                        pass  # rendering is a bonus; results stand alone
         return results
 
     def quality_check(
@@ -848,13 +799,15 @@ class Rollouts:
                 sandbox.events = []
             reply = agent(session["transcript"], sandbox)
             body: dict[str, Any] = {"tool_calls": sandbox.events}
-            audio = _as_audio_bytes(reply)
-            if audio is not None:
-                # The agent replied with audio — the server transcribes it
-                # (voice-enabled accounts) and the transcript drives the
-                # simulator.
+            upload = _as_file_bytes(reply)
+            if upload is not None:
+                # The agent replied with a file — the server sniffs it:
+                # audio is transcribed and flips the rollout into voice
+                # mode; images and documents are rendered to text. The
+                # extracted text drives the simulator either way.
                 body["reply"] = ""
-                body["audio_b64"] = base64.b64encode(audio[0]).decode()
+                body["file_b64"] = base64.b64encode(upload[0]).decode()
+                body["filename"] = upload[1]
             else:
                 body["reply"] = reply
             # Turn posts advance server transcript state, so a blind retry
@@ -865,25 +818,19 @@ class Rollouts:
             try:
                 r = self._http.post(
                     f"/v1/rollouts/{session['id']}/turns", json=body)
-                if audio is not None:
-                    _raise_for_voice(r)
-                else:
-                    r.raise_for_status()
+                r.raise_for_status()
                 session = r.json()
             except (httpx.TransportError, httpx.HTTPStatusError) as e:
-                if audio is not None:
-                    # Voice path: don't attempt turn recovery — translate a
-                    # 403 to a friendly voice error, otherwise re-raise.
-                    if isinstance(e, httpx.HTTPStatusError):
-                        _raise_for_voice(e.response)
-                    raise
                 session = self._recover_turn(
                     session["id"], prior_turn, body, e)
         return RolloutResult(
             rollout_id=session["id"], scenario_id=scenario_id,
             status=session["status"], turns=session["turn"],
             transcript=session["transcript"],
-            tool_events=session.get("tool_events", []))
+            tool_events=session.get("tool_events", []),
+            voiced=session.get("voiced", False),
+            voice_render_id=session.get("voice_render_id"),
+            _http=self._http)
 
 
 class Synthia:
@@ -900,18 +847,15 @@ class Synthia:
     (today's behavior); keyless against a keyed server -> anonymous session;
     an invalid api_key fails immediately with the server's message.
 
-    Voice: the session handshake mirrors the account's customer config
-    (voice_enabled unlocks the voice surfaces; voice_auto makes rollouts
-    voice themselves). `voice` overrides the mode for this client:
-    voice=True behaves like a voice.auto account — every completed rollout
-    gets a mixed-WAV render attached (requires a voice-enabled config;
-    raises up front otherwise) — and voice=False keeps rollouts text-only
-    even when the config says auto. voice=None (default) follows the config.
+    Voice: zero configuration — modality mirroring. An agent that replies
+    with audio (or a scenario built from an audio seed) flips its rollout
+    into voice mode: simulated-user turns come back as audio and the
+    finished rollout carries a server-attached mixed render
+    (RolloutResult.audio()). Text agents are unaffected.
     """
 
     def __init__(self, api_key: str | None = None, base_url: str | None = None,
                  session: Union[str, bool, None] = None,
-                 voice: bool | None = None,
                  ci: dict | None = None):
         api_key = api_key or os.environ.get("SYNTHIA_API_KEY")
         base_url = base_url or os.environ.get("SYNTHIA_BASE_URL", DEFAULT_BASE_URL)
@@ -932,32 +876,15 @@ class Synthia:
                                  or _default_session_name())
         self.session_id: str | None = None
         self.invocation_id: str | None = None
-        # Voice mode, mirrored from the account's customer config by the
-        # session handshake: enabled unlocks the voice surfaces; auto makes
-        # rollouts voice themselves. The `voice` argument overrides the
-        # config-mirrored auto default for this client (see class docstring).
-        self.voice_enabled: bool = False
-        self.voice_auto: bool = False
         # CI floors/caps mirrored from the customer config by the handshake
         # (shape: pass_rate_floor, max_concurrency, default_pass_rate); None
         # when the account has no CI policy. Populated by _start_session.
         self.ci_settings: dict | None = None
         self._start_session()
-        if voice is not None:
-            if voice and self.session_id and not self.voice_enabled:
-                # Fail fast only when the handshake actually reported the
-                # account's capabilities; degraded runs get the server's
-                # friendly 403 on first voice call instead.
-                raise RuntimeError(
-                    "voice=True but voice is not enabled for this account — "
-                    "voice is enabled per customer config; ask your Synthia "
-                    "contact to turn it on for your organization")
-            self.voice_auto = voice
         self.seeds = Seeds(self._http)
         self.user_models = UserModels(self._http)
         self.datasets = Datasets(self._http)
-        self.rollouts = Rollouts(self._http, session_id=self.session_id,
-                                 voice_auto=self.voice_auto)
+        self.rollouts = Rollouts(self._http, session_id=self.session_id)
 
     def _start_session(self) -> None:
         """One handshake per process: get-or-create the named session and
@@ -991,54 +918,24 @@ class Synthia:
         data = r.json()
         self.session_id = data["sdk_session_id"]
         self.invocation_id = data["sdk_invocation_id"]
-        self.voice_enabled = data.get("voice_enabled", False)
-        self.voice_auto = data.get("voice_auto", False)
         self.ci_settings = data.get("ci")
         self._http.headers["X-Synthia-Session"] = self.session_id
         self._http.headers["X-Synthia-Invocation"] = self.invocation_id
 
-    def voice_render(self, *, scenario_id: str | None = None,
-                     rollout_id: str | None = None, takes: int = 1,
-                     stability: float | None = None, annotate: bool = False,
-                     phone_fx: bool = False, room_tone: bool = False,
-                     voice_overrides: dict | None = None) -> VoiceRender:
-        """Voice one scenario (an LLM authors the full two-sided script) or
-        one finished rollout (deterministic transcript transform). Exactly
-        one source id. Voices are cast from the scenario unless overridden;
-        `stability` (0..1) trades consistency for expressiveness. Requires
-        a voice-enabled customer config."""
-        return _create_voice_render(self._http, {
-            "scenario_id": scenario_id, "rollout_id": rollout_id,
-            "takes": takes, "stability": stability, "annotate": annotate,
-            "phone_fx": phone_fx, "room_tone": room_tone,
-            "voice_overrides": voice_overrides})
-
     def prepare(self, agent: Agent, *, count: int = 100, max_turns: int = 10,
                 min_success_rate: float = 0.6, max_success_rate: float = 0.9,
                 reprobe: bool = False,
-                verbose: bool = False, voice: bool = False) -> PrepareResult:
+                verbose: bool = False) -> PrepareResult:
         """Probe + generate only when needed; otherwise reuse the latest
         dataset. See _prepare for the decision rules. `reprobe=True` skips
         every reuse check: the agent is re-interviewed, the context
         re-distilled, and a fresh batch generated — use it when the agent
         or its domain changed.
-
-        voice=True additionally voices every scenario in the prepared
-        dataset (an LLM authors each script, then a takes=1 render) —
-        explicit opt-in because it spends per row; the handles come back
-        still-running on PrepareResult.voice_renders. Accounts with
-        voice.auto don't need this: their rollouts voice themselves.
         """
-        result = self._prepare(agent, count=count, max_turns=max_turns,
-                               min_success_rate=min_success_rate,
-                               max_success_rate=max_success_rate,
-                               reprobe=reprobe, verbose=verbose)
-        if voice:
-            for row in result.dataset.download():
-                result.voice_renders.append(
-                    self.voice_render(scenario_id=row["scenario_id"],
-                                      takes=1))
-        return result
+        return self._prepare(agent, count=count, max_turns=max_turns,
+                             min_success_rate=min_success_rate,
+                             max_success_rate=max_success_rate,
+                             reprobe=reprobe, verbose=verbose)
 
     def run(self, agent: RolloutAgent, *, count: int = 100,
             dataset: Union[Dataset, str, None] = None,

@@ -110,8 +110,8 @@ Built-in patterns (matches become `[REDACTED:<name>]`):
 | `synthia` | Synthia's own `synthia_…`/`vox_…` prefixes |
 
 Two caveats, stated plainly: this is **risk reduction, not a guarantee** —
-novel secret formats pass through — and **audio replies are not redacted**
-(voice-enabled accounts get a one-time warning). The right fix is an agent
+novel secret formats pass through — and **file replies (audio, images,
+documents) are not redacted** (a one-time warning). The right fix is an agent
 that doesn't put secrets in replies; redaction is the seatbelt.
 
 ### `output`

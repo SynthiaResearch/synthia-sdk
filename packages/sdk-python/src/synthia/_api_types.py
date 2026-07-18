@@ -271,8 +271,6 @@ class SdkSession(TypedDict):
     sdk_session_id: str
     sdk_invocation_id: str
     name: str
-    voice_enabled: NotRequired[bool]
-    voice_auto: NotRequired[bool]
     ci: NotRequired[CiSettings | None]
 
 
@@ -307,8 +305,8 @@ class SeedCreate(TypedDict):
     content: NotRequired[dict[str, Any]]
     version: NotRequired[str]
     metadata: NotRequired[dict[str, Any]]
-    audio_b64: NotRequired[str | None]
-    audio_filename: NotRequired[str | None]
+    file_b64: NotRequired[str | None]
+    filename: NotRequired[str | None]
 
 
 class ToolCall(TypedDict):
@@ -449,12 +447,15 @@ class Rollout(TypedDict):
     transcript: list[TranscriptTurn]
     sandbox: SandboxConfig
     tool_events: NotRequired[list[ToolCall]]
+    voiced: NotRequired[bool]
+    voice_render_id: NotRequired[str | None]
 
 
 class RolloutTurnCreate(TypedDict):
     reply: NotRequired[str]
     tool_calls: NotRequired[list[ToolCall]]
-    audio_b64: NotRequired[str | None]
+    file_b64: NotRequired[str | None]
+    filename: NotRequired[str | None]
 
 
 class RunList(TypedDict):

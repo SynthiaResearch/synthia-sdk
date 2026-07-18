@@ -9,7 +9,6 @@ export {
   UserModels,
   Datasets,
   Rollouts,
-  VoiceRender,
   DEFAULT_BASE_URL,
 } from "./client.js";
 export type {
@@ -17,7 +16,7 @@ export type {
   AgentReply,
   ApiRollout,
   ApiToolCall,
-  AudioInput,
+  FileInput,
   CiSettings,
   DatasetRow,
   EvalOptions,
@@ -36,6 +35,5 @@ export type {
   ToolEvent,
   TranscriptTurn,
   UserModel,
-  VoiceOptions,
   WaitOptions,
 } from "./client.js";

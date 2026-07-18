@@ -26,11 +26,13 @@ Everything in the SDK is built around two function shapes you provide:
 type Agent = (probe: string) => string | AgentReply | Promise<…>;
 
 // Rollouts: full conversations. Gets the transcript so far plus a
-// deterministic ToolSandbox for tool calls; returns the next reply
-// (a string, or audio bytes / a path to an audio file on voice-enabled
-// accounts). Scenarios run concurrently — no shared mutable state.
+// deterministic ToolSandbox for tool calls; returns the next reply —
+// a string, or a file (bytes / a path): audio replies flip the rollout
+// into voice mode (the simulated user talks back in audio), image and
+// document replies are rendered to text server-side. Scenarios run
+// concurrently — no shared mutable state.
 type RolloutAgent = (transcript: TranscriptTurn[], sandbox: ToolSandbox)
-  => string | AudioInput | Promise<string | AudioInput>;
+  => string | FileInput | Promise<string | FileInput>;
 
 // TranscriptTurn.role is "user" (the simulated user) or "agent" (your
 // agent's earlier replies). Map "agent" to your stack's assistant role
@@ -59,7 +61,6 @@ const synthia = new Synthia(); // reads SYNTHIA_API_KEY / SYNTHIA_BASE_URL
 | `apiKey` | `SYNTHIA_API_KEY` env | Bearer key. Keyless clients degrade to an anonymous session where the server allows it. |
 | `baseUrl` | `SYNTHIA_BASE_URL` env, then the hosted API | API origin. |
 | `session` | `SYNTHIA_SESSION` env, then a derived name | Session identity (below). `session: false` = fresh ephemeral session. |
-| `voice` | account config | `true` forces voice-auto behavior (handshake rejects if the account isn't voice-enabled); `false` keeps rollouts text-only even on a voice-auto account. |
 | `ci` | — | CI provenance (commit sha, branch, …) stamped onto every run this process creates. Set by `synthia run`; reporting only. |
 
 **Sessions.** Every client belongs to a named session — the stable,
@@ -71,7 +72,7 @@ the degradation ladder: [environment.md](./environment.md#sessions).
 
 Construction never awaits: the session handshake runs in the background and
 gates every later request. Public fields populated by it: `sessionName`,
-`sessionId`, `invocationId`, `voiceEnabled`, `voiceAuto`, `ciSettings`
+`sessionId`, `invocationId`, `ciSettings`
 (your org's CI policy: `pass_rate_floor`, `max_concurrency`,
 `default_pass_rate`; `null` when none).
 
@@ -79,7 +80,7 @@ gates every later request. Public fields populated by it: `sessionName`,
 
 Awaits the handshake explicitly. Every request waits on it implicitly, so
 this is optional — call it to fail fast on a bad API key and to read the
-handshake-mirrored fields (`ciSettings`, `voiceEnabled`) before acting.
+handshake-mirrored fields (`ciSettings`) before acting.
 
 ### `await synthia.run(agent, options?)` → `EvalOutcome`
 
@@ -131,7 +132,6 @@ const { dataset, action, reason } = await synthia.prepare(async (probe) => {
 | `minSuccessRate` | `0.6` | Lower edge of the healthy pass-rate band. |
 | `maxSuccessRate` | `0.9` | Upper edge — a suite your agent aces teaches nothing. |
 | `verbose` | `false` | Stream server telemetry (probe decisions, generation progress). |
-| `voice` | `false` | Also voice every generated scenario (voice-enabled accounts; spends per row). Handles return still-running on `result.voiceRenders`. |
 
 Decision rules — probing/generation runs only when:
 
@@ -147,17 +147,26 @@ Decision rules — probing/generation runs only when:
 Otherwise the latest dataset is **reused**. All lookups are scoped to this
 client's session, so other scripts' results never trigger regeneration
 here. `PrepareResult`: `{ dataset, userModel, action: "generated"|"reused",
-reason, successRate, qualityCheckId, voiceRenders? }` — `reason` is the
-human-readable decision trail; log it in CI.
+reason, successRate, qualityCheckId }` — `reason` is the human-readable
+decision trail; log it in CI.
 
-### `await synthia.voiceRender({ scenarioId | rolloutId, ...VoiceOptions })` → `VoiceRender`
+## Voice — zero configuration
 
-Voice one scenario (an LLM authors the two-sided script) or one finished
-rollout (deterministic transcript transform — words verbatim). Exactly one
-source id. Requires a voice-enabled account (403s are translated into an
-actionable error). `VoiceOptions`: `takes` (default 1), `stability` (0–1,
-lower = more expressive; default from config, then 0.35), `annotate`,
-`phoneFx`, `roomTone`, `voiceOverrides`.
+Voice is modality mirroring: **if your agent sends audio, Synthia talks
+back in audio.** There is nothing to enable and no option to set.
+
+- An agent reply that is audio (any common container — wav, mp3, m4a,
+  ogg, flac, webm, aac, aiff) flips that rollout into **voice mode**:
+  the server transcribes the reply (the transcript stays authoritative),
+  every simulated-user turn from then on carries an `audio_url`, and the
+  finished rollout gets a mixed-WAV render attached server-side.
+- Scenarios built from audio seeds (`seeds.ingest` with a recording) are
+  voice-origin: their rollouts run in voice mode from turn 0.
+- Text agents are untouched — text in, text out.
+
+On a voiced `RolloutResult`: `voiced` is `true`, `voice_render_id` names
+the server-attached render, and `await result.audio()` waits for it and
+returns the mixed conversation WAV.
 
 ## Resources
 
@@ -166,9 +175,12 @@ lower = more expressive; default from config, then 0.35), `annotate`,
 - **`ingest({ kind, source, content, version?, metadata? })`** — upload seed
   material (documents, tool schemas, policies, traces…) that grounds
   probing and generation. `content` is overloaded: an object is ingested
-  as-is; `Uint8Array` bytes or a path to an audio file
-  (`.wav/.mp3/.m4a/.ogg/.flac/.webm`) is uploaded and transcribed
-  server-side (voice-enabled accounts), the transcript becoming the seed.
+  as-is; `Uint8Array` bytes or a path to a file is uploaded and handled
+  server-side with zero parameters — the server sniffs the type. Audio
+  (any common container) is transcribed and marks the seed voice-origin
+  (rollouts on scenarios built from it run in voice mode); images, PDFs,
+  and Office documents are rendered to text natively; plain text is used
+  as-is.
 
 ### `synthia.userModels`
 
@@ -202,17 +214,16 @@ lower = more expressive; default from config, then 0.35), `annotate`,
 - **`qualityCheck(rolloutsOrIds, label?)`** → `QualityCheck` — start the
   server-side evaluation of finished rollouts.
 - **`get(rolloutId)`** — a stored rollout's full captured state.
-- **`voice(rolloutOrId, VoiceOptions?)`** → `VoiceRender`;
-  **`turnAudio(rolloutId, idx)`** → `Uint8Array` (turns with an `audio_url`).
+- **`turnAudio(rolloutId, idx)`** → `Uint8Array` (turns with an `audio_url`).
 
 `RolloutResult`: `{ rollout_id, scenario_id, status, turns, transcript,
-tool_events, voice_render? }` (`voice_render` attaches, already running, on
-voice-auto accounts).
+tool_events, voiced, voice_render_id?, audio? }` — on voiced rollouts
+`await result.audio()` returns the server-attached mixed conversation WAV.
 
 ## Jobs and `wait()`
 
-`GenerationJob`, `ValidationRun`, `QualityCheck`, and `VoiceRender` are
-polling handles over async server work. All share:
+`GenerationJob`, `ValidationRun`, and `QualityCheck` are polling handles
+over async server work. All share:
 
 ```ts
 await job.wait({ pollInterval: 2, timeout: 1800, verbose: false });
@@ -231,8 +242,6 @@ and with `verbose: true` streams the server's per-stage telemetry lines.
 - **`QualityCheck`**: `rollouts()` — the product: per-rollout
   `{ rollout_id, passed, states, judge }` (the agentic-state trajectory and
   the judge's dimensions/issues). There is deliberately no aggregate verdict.
-- **`VoiceRender`**: `audio()` → WAV bytes, `saveAudio(path)`; fields
-  `duration_ms`, `wpm`, `provenance` (per-turn take provenance).
 
 ## `ToolSandbox`
 
@@ -282,5 +291,4 @@ HTTP failures throw `Error`s carrying method, path, status, and the server's
 body. Transient failures (network blips, 5xx/429 from serverless cold
 starts) are retried with jittered backoff — but only where a duplicate is
 harmless (GETs and create-style POSTs). Rollout turn posts are never blindly
-retried; see `rollouts.run` above. Voice calls against a non-voice account
-throw an actionable "ask your Synthia contact" error rather than a bare 403.
+retried; see `rollouts.run` above.
