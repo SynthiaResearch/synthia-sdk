@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://synthia.dev/schema/synthia.schema.json",
+  "$id": "https://raw.githubusercontent.com/SynthiaResearch/synthia-sdk/main/packages/sdk-js/schema/synthia.schema.json",
   "title": "synthia.yaml",
   "description": "Configuration for `synthia run` — Synthia agent evals in CI.",
   "type": "object",
