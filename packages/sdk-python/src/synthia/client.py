@@ -833,8 +833,19 @@ class Rollouts:
         })
         r.raise_for_status()
         session: "Rollout" = r.json()
+        # ONE sandbox object for the whole rollout: your agent's per-
+        # conversation state lives on sandbox.context, so identity must be
+        # stable across turns (a fresh object per turn silently amnesia-ed
+        # every stateful agent). Server-mirrored fields refresh each turn.
+        sandbox: ToolSandbox | None = None
         while session["status"] == "running":
-            sandbox = ToolSandbox.from_config(session["sandbox"])
+            cfg = session["sandbox"]
+            if sandbox is None:
+                sandbox = ToolSandbox.from_config(cfg)
+            else:
+                sandbox.state = dict(cfg["state"])
+                sandbox.fail_tools = set(cfg["fail_tools"])
+                sandbox.events = []
             reply = agent(session["transcript"], sandbox)
             body: dict[str, Any] = {"tool_calls": sandbox.events}
             audio = _as_audio_bytes(reply)

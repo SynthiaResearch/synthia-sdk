@@ -1204,8 +1204,19 @@ export class Rollouts {
       agent: agentMeta ?? null,
       dataset_id: datasetId ?? null,
     });
+    // ONE sandbox object for the whole rollout: your agent's per-
+    // conversation state lives on sandbox.context, so identity must be
+    // stable across turns (a fresh object per turn silently amnesia-ed
+    // every stateful agent). Server-mirrored fields refresh each turn.
+    let sandbox: ToolSandbox | null = null;
     while (session.status === "running") {
-      const sandbox = ToolSandbox.fromConfig(session.sandbox);
+      if (sandbox === null) {
+        sandbox = ToolSandbox.fromConfig(session.sandbox);
+      } else {
+        sandbox.state = { ...session.sandbox.state };
+        sandbox.failTools = new Set(session.sandbox.fail_tools);
+        sandbox.events = [];
+      }
       const reply = await agent(session.transcript, sandbox);
       const audioB64 = asAudioB64(reply);
       const body: Record<string, unknown> = { tool_calls: sandbox.events };
