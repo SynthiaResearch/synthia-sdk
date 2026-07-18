@@ -111,23 +111,28 @@ class _RetryClient:
             resp = self._c.get(location)
         return resp
 
-# File suffixes recognized when a path is passed where content/replies are
-# overloaded (seeds.ingest, rollout agent replies): a string/Path ending in
-# one of these is read and uploaded; any other string is text. The server
-# sniffs the actual type — audio (in any of these containers) engages voice
-# mode; images and documents are rendered to text.
+# File suffixes recognized when a *string* path is passed where content/
+# replies are overloaded (seeds.ingest, rollout agent replies): a string
+# ending in one of these is read and uploaded; any other string is text.
+# Text suffixes (.txt, .md, …) are deliberately absent — a plain-text reply
+# can end in one. A `pathlib.Path` is never ambiguous and always uploads,
+# whatever its suffix. The server sniffs the actual type — audio (in any of
+# these containers) engages voice mode; images and documents are rendered
+# to text.
 _FILE_SUFFIXES = {".wav", ".mp3", ".m4a", ".ogg", ".flac", ".webm", ".aac",
                   ".aiff", ".png", ".jpg", ".jpeg", ".gif", ".webp",
                   ".pdf", ".docx", ".pptx", ".xlsx"}
 
 
 def _as_file_bytes(value) -> "tuple[bytes, str | None] | None":
-    """(file bytes, filename) when `value` is a file — raw bytes or a path
-    ending in a recognized suffix — else None. The runtime half of the
-    overloads; the server sniffs the type, filename is only a hint."""
+    """(file bytes, filename) when `value` is a file — raw bytes, a `Path`,
+    or a string ending in a recognized suffix — else None. The runtime half
+    of the overloads; the server sniffs the type, filename is only a hint."""
     if isinstance(value, (bytes, bytearray)):
         return bytes(value), None
-    if isinstance(value, (str, Path)):
+    if isinstance(value, Path):
+        return value.read_bytes(), value.name
+    if isinstance(value, str):
         p = Path(value)
         if p.suffix.lower() in _FILE_SUFFIXES:
             return p.read_bytes(), p.name
