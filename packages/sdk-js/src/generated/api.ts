@@ -238,10 +238,12 @@ export interface paths {
          * @description Distill a redacted production issue trace into synthetic scenarios.
          *
          *     Client-side redaction is required (the SDK does it before send). The raw
-         *     trace is NEVER persisted: we (1) verify-scan and refuse residual PII,
-         *     (2) distill an in-memory representation + structured failure notes with no
-         *     seeds row, (3) output-scan the distillation, then (4) generate scenarios
-         *     via the standard pipeline using stub user_model/probe_session wiring rows.
+         *     trace is NEVER persisted, and a trace that isn't actually a failure is
+         *     refused before anything is written: we (1) verify-scan and refuse residual
+         *     PII, (2) determine whether it's a real production issue and refuse it if
+         *     not — no data saved, (3) distill an in-memory representation + failure
+         *     notes with no seeds row, (4) output-scan the distillation, then (5)
+         *     generate scenarios via the standard pipeline using stub wiring rows.
          */
         post: operations["create_trace_v1_traces_post"];
         delete?: never;
