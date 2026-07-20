@@ -124,8 +124,9 @@ export interface paths {
         };
         /**
          * Get Issue
-         * @description One captured production issue: the full distilled failure (trace notes)
-         *     plus the reproduction tests it generated. The raw trace is never stored.
+         * @description One captured production issue: the distilled failure (trace notes), the
+         *     client-side-redacted conversation, and the reproduction tests it generated
+         *     (same scenario-card shape the run detail uses). No raw PII is stored.
          */
         get: operations["get_issue_v1_account_issues__issue_id__get"];
         put?: never;
@@ -1138,6 +1139,20 @@ export interface components {
             notes: {
                 [key: string]: unknown;
             };
+            /**
+             * Transcript
+             * @default []
+             */
+            transcript: {
+                [key: string]: unknown;
+            }[];
+            /**
+             * Tool Events
+             * @default []
+             */
+            tool_events: {
+                [key: string]: unknown;
+            }[];
             /** Generation Id */
             generation_id?: string | null;
             /** Dataset Id */
@@ -1150,23 +1165,14 @@ export interface components {
              * Scenarios
              * @default []
              */
-            scenarios: components["schemas"]["IssueScenario"][];
+            scenarios: {
+                [key: string]: unknown;
+            }[];
         };
         /** IssueList */
         IssueList: {
             /** Issues */
             issues: components["schemas"]["IssueSummary"][];
-        };
-        /** IssueScenario */
-        IssueScenario: {
-            /** Scenario Id */
-            scenario_id: string;
-            /** Task Family */
-            task_family: string;
-            /** Title */
-            title: string;
-            /** Opening Message */
-            opening_message: string;
         };
         /** IssueSummary */
         IssueSummary: {
