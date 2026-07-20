@@ -114,6 +114,20 @@ class HealthResponse(TypedDict):
     sha: NotRequired[str | None]
 
 
+class IssueSummary(TypedDict):
+    id: str
+    created_at: str
+    source: NotRequired[str | None]
+    failure_summary: str
+    failure_category: str
+    tools_involved: NotRequired[list[str]]
+    generation_id: NotRequired[str | None]
+    dataset_id: NotRequired[str | None]
+    status: str
+    rows: NotRequired[int | None]
+    sdk_session_name: NotRequired[str | None]
+
+
 class MetricDefinition(TypedDict):
     name: str
     label: str
@@ -418,6 +432,10 @@ class HTTPValidationError(TypedDict):
     detail: NotRequired[list[ValidationError]]
 
 
+class IssueList(TypedDict):
+    issues: list[IssueSummary]
+
+
 class KeyUsage(TypedDict):
     api_key_id: NotRequired[str | None]
     requests: int
@@ -461,6 +479,14 @@ class RolloutTurnCreate(TypedDict):
 class RunList(TypedDict):
     sessions: list[SdkSessionSummary]
     runs: list[RunSummary]
+
+
+class TraceCreate(TypedDict):
+    transcript: NotRequired[list[TranscriptTurn]]
+    tool_events: NotRequired[list[ToolCall]]
+    source: str
+    error: NotRequired[str | None]
+    count: NotRequired[int]
 
 
 class DemoSimulation(TypedDict):

@@ -9,6 +9,8 @@ export {
   UserModels,
   Datasets,
   Rollouts,
+  Traces,
+  TraceRecorder,
   DEFAULT_BASE_URL,
 } from "./client.js";
 export type {
@@ -33,6 +35,9 @@ export type {
   SynthiaOptions,
   ToolCall,
   ToolEvent,
+  TraceInput,
+  TraceIngestOptions,
+  TraceToolEvent,
   TranscriptTurn,
   UserModel,
   WaitOptions,

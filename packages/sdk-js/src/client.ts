@@ -1136,6 +1136,178 @@ export class Rollouts {
   }
 }
 
+// --- Production issue traces ------------------------------------------------
+
+/** One real tool call from a production trace; external outputs are the
+ * agent's own tools' real results (persisted verbatim server-side). */
+export interface TraceToolEvent {
+  name: string;
+  input: Record<string, unknown>;
+  output?: Record<string, unknown> | null;
+  is_error?: boolean;
+  turn_idx?: number;
+  external?: boolean;
+}
+
+/** A captured production trace: a conversation plus the real tool calls the
+ * agent made — the same shape a rollout emits. Feed to traces.ingest() to
+ * generate synthetic scenarios that reproduce a failure. */
+export interface TraceInput {
+  transcript: TranscriptTurn[];
+  tool_events: TraceToolEvent[];
+}
+
+export interface TraceIngestOptions {
+  /** Provenance label shown on the Issues page (e.g. "prod/zendesk"). */
+  source: string;
+  /** Optional operator hint describing the failure; sharpens extraction. */
+  error?: string;
+  /** Size of the generated dataset. */
+  count?: number;
+  /** Extra redactor composed after the built-in detectors, applied to every
+   * transcript/tool string before the trace leaves this process. */
+  redact?: (value: string) => string;
+}
+
+// Built-in structured-PII detectors. Client-side redaction is REQUIRED and
+// runs before the trace leaves this process — raw PII never reaches the
+// server or its LLM. Structured PII is caught deterministically here; the
+// server re-scans as a backstop. Names/addresses need the `redact` hook.
+// Order matters: card (13-19 digits) is matched before phone (9-15) so a card
+// number isn't partially eaten and mislabeled as a phone.
+const PII_DETECTORS: [RegExp, string][] = [
+  [/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g, "<redacted:email>"],
+  [/(?<!\d)\d{3}-\d{2}-\d{4}(?!\d)/g, "<redacted:ssn>"],
+  [/(?<!\d)(?:\d[ -]?){13,19}(?!\d)/g, "<redacted:card>"],
+  [/(?<!\d)(?:\+?\d[\s.-]?){9,14}\d(?!\d)/g, "<redacted:phone>"],
+  [
+    /(?<!\d)(?:(?:25[0-5]|2[0-4]\d|1?\d?\d)\.){3}(?:25[0-5]|2[0-4]\d|1?\d?\d)(?!\d)/g,
+    "<redacted:ip>",
+  ],
+];
+
+// Tool inputs/outputs are structured JSON: a value under a sensitive key is
+// masked wholesale (more reliable than free-text regex over JSON).
+const SENSITIVE_KEY =
+  /email|phone|ssn|dob|birth|address|name|card|account|token|secret|password/i;
+
+function redactString(s: string, extra?: (v: string) => string): string {
+  let out = s;
+  for (const [re, repl] of PII_DETECTORS) out = out.replace(re, repl);
+  return extra ? extra(out) : out;
+}
+
+function redactValue(
+  value: unknown,
+  extra?: (v: string) => string,
+  keyHint?: string,
+): unknown {
+  if (typeof value === "string") {
+    if (keyHint && SENSITIVE_KEY.test(keyHint)) return "<redacted>";
+    return redactString(value, extra);
+  }
+  if (Array.isArray(value)) return value.map((v) => redactValue(v, extra));
+  if (value && typeof value === "object") {
+    const out: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
+      out[k] = redactValue(v, extra, k);
+    }
+    return out;
+  }
+  return value;
+}
+
+function redactTrace(
+  trace: TraceInput,
+  extra?: (v: string) => string,
+): TraceInput {
+  return {
+    transcript: trace.transcript.map((t) => ({
+      ...t,
+      content: redactString(t.content, extra),
+    })),
+    tool_events: trace.tool_events.map((e) => ({
+      ...e,
+      input: redactValue(e.input, extra) as Record<string, unknown>,
+      output:
+        e.output == null
+          ? e.output
+          : (redactValue(e.output, extra) as Record<string, unknown>),
+    })),
+  };
+}
+
+/**
+ * Detached trace recorder with report() ergonomics identical to ToolSandbox,
+ * but not bound to any rollout — capture a production conversation as it
+ * happens, then hand the recorder (or its .trace) to traces.ingest().
+ */
+export class TraceRecorder {
+  #turns: TranscriptTurn[] = [];
+  #events: TraceToolEvent[] = [];
+
+  /** Append a user turn. */
+  user(content: string): void {
+    this.#turns.push({ role: "user", content });
+  }
+
+  /** Append an agent turn. */
+  agent(content: string): void {
+    this.#turns.push({ role: "agent", content });
+  }
+
+  /** Record a real tool call the agent made on the current turn. */
+  report(
+    name: string,
+    output: Record<string, unknown>,
+    opts: { input?: Record<string, unknown>; isError?: boolean } = {},
+  ): void {
+    this.#events.push({
+      name,
+      input: opts.input ?? {},
+      output,
+      is_error: opts.isError ?? false,
+      external: true,
+      turn_idx: Math.max(0, this.#turns.length - 1),
+    });
+  }
+
+  /** The captured trace. */
+  get trace(): TraceInput {
+    return { transcript: this.#turns, tool_events: this.#events };
+  }
+}
+
+export class Traces {
+  #http: Http;
+
+  constructor(http: Http) {
+    this.#http = http;
+  }
+
+  /**
+   * Ingest a production issue trace: redact it client-side (required, always
+   * on), then distill it server-side into synthetic scenarios that reproduce
+   * the failure. The raw trace is never persisted. Returns the generation
+   * job — await its wait() for the dataset.
+   */
+  async ingest(
+    trace: TraceInput | TraceRecorder,
+    opts: TraceIngestOptions,
+  ): Promise<GenerationJob> {
+    const raw = trace instanceof TraceRecorder ? trace.trace : trace;
+    const redacted = redactTrace(raw, opts.redact);
+    const data = await this.#http.post<Api<"GenerationJob">>("/v1/traces", {
+      transcript: redacted.transcript,
+      tool_events: redacted.tool_events,
+      source: opts.source,
+      error: opts.error ?? null,
+      count: opts.count ?? 20,
+    });
+    return new GenerationJob(data, this.#http);
+  }
+}
+
 export interface SynthiaOptions {
   apiKey?: string;
   baseUrl?: string;
@@ -1250,6 +1422,7 @@ export class Synthia {
   userModels: UserModels;
   datasets: Datasets;
   rollouts: Rollouts;
+  traces: Traces;
   #http: Http;
   #ci: Record<string, unknown> | null;
 
@@ -1279,6 +1452,7 @@ export class Synthia {
     this.userModels = new UserModels(this.#http);
     this.datasets = new Datasets(this.#http);
     this.rollouts = new Rollouts(this.#http);
+    this.traces = new Traces(this.#http);
   }
 
   /**

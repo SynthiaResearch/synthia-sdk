@@ -9,10 +9,13 @@ from .client import (
     Synthia,
     ToolCall,
     ToolSandbox,
+    TraceRecorder,
+    Traces,
     UserModel,
     ValidationRun,
 )
 
 __all__ = ["Synthia", "UserModel", "GenerationJob", "Dataset", "AgentReply",
            "ToolCall", "ValidationRun", "QualityCheck", "RolloutResult",
-           "ToolSandbox", "PrepareResult", "EvalOutcome"]
+           "ToolSandbox", "PrepareResult", "EvalOutcome",
+           "TraceRecorder", "Traces"]

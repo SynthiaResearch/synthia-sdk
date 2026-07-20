@@ -92,6 +92,29 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/account/issues": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Issues
+         * @description Captured production issue traces — the Runs page's second list.
+         *
+         *     Each row is a trace-originated representation (trace_notes NOT NULL; the
+         *     raw trace was discarded) joined to the generation/dataset it produced.
+         */
+        get: operations["list_issues_v1_account_issues_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/account/runs/{run_id}": {
         parameters: {
             query?: never;
@@ -195,6 +218,32 @@ export interface paths {
         put?: never;
         /** Create Seed */
         post: operations["create_seed_v1_seeds_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/traces": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Create Trace
+         * @description Distill a redacted production issue trace into synthetic scenarios.
+         *
+         *     Client-side redaction is required (the SDK does it before send). The raw
+         *     trace is NEVER persisted: we (1) verify-scan and refuse residual PII,
+         *     (2) distill an in-memory representation + structured failure notes with no
+         *     seeds row, (3) output-scan the distillation, then (4) generate scenarios
+         *     via the standard pipeline using stub user_model/probe_session wiring rows.
+         */
+        post: operations["create_trace_v1_traces_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1048,6 +1097,42 @@ export interface components {
             /** Sha */
             sha?: string | null;
         };
+        /** IssueList */
+        IssueList: {
+            /** Issues */
+            issues: components["schemas"]["IssueSummary"][];
+        };
+        /** IssueSummary */
+        IssueSummary: {
+            /** Id */
+            id: string;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Source */
+            source?: string | null;
+            /** Failure Summary */
+            failure_summary: string;
+            /** Failure Category */
+            failure_category: string;
+            /**
+             * Tools Involved
+             * @default []
+             */
+            tools_involved: string[];
+            /** Generation Id */
+            generation_id?: string | null;
+            /** Dataset Id */
+            dataset_id?: string | null;
+            /** Status */
+            status: string;
+            /** Rows */
+            rows?: number | null;
+            /** Sdk Session Name */
+            sdk_session_name?: string | null;
+        };
         /** KeyUsage */
         KeyUsage: {
             /** Api Key Id */
@@ -1628,6 +1713,28 @@ export interface components {
              */
             external: boolean;
         };
+        /** TraceCreate */
+        TraceCreate: {
+            /**
+             * Transcript
+             * @default []
+             */
+            transcript: components["schemas"]["TranscriptTurn"][];
+            /**
+             * Tool Events
+             * @default []
+             */
+            tool_events: components["schemas"]["ToolCall"][];
+            /** Source */
+            source: string;
+            /** Error */
+            error?: string | null;
+            /**
+             * Count
+             * @default 20
+             */
+            count: number;
+        };
         /** TranscriptTurn */
         TranscriptTurn: {
             /**
@@ -1947,6 +2054,37 @@ export interface operations {
             };
         };
     };
+    list_issues_v1_account_issues_get: {
+        parameters: {
+            query?: {
+                limit?: number | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["IssueList"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     get_run_v1_account_runs__run_id__get: {
         parameters: {
             query?: never;
@@ -2102,6 +2240,39 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Seed"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_trace_v1_traces_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TraceCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GenerationJob"];
                 };
             };
             /** @description Validation Error */

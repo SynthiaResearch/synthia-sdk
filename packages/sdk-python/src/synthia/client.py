@@ -5,6 +5,7 @@ import hashlib
 import json
 import os
 import random
+import re
 import sys
 import time
 import uuid
@@ -470,6 +471,119 @@ class Seeds:
         return r.json()
 
 
+# --- Production issue traces -------------------------------------------------
+# Client-side redaction is REQUIRED and runs before a trace leaves this
+# process — raw PII never reaches the server or its LLM. Structured PII is
+# caught deterministically here; the server re-scans as a backstop.
+# Names/addresses need the `redact` hook.
+# Order matters: card (13-19 digits) is matched before phone (9-15) so a card
+# number isn't partially eaten and mislabeled as a phone.
+_PII_DETECTORS = [
+    (re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}"),
+     "<redacted:email>"),
+    (re.compile(r"(?<!\d)\d{3}-\d{2}-\d{4}(?!\d)"), "<redacted:ssn>"),
+    (re.compile(r"(?<!\d)(?:\d[ -]?){13,19}(?!\d)"), "<redacted:card>"),
+    (re.compile(r"(?<!\d)(?:\+?\d[\s.-]?){9,14}\d(?!\d)"), "<redacted:phone>"),
+    (re.compile(r"(?<!\d)(?:(?:25[0-5]|2[0-4]\d|1?\d?\d)\.){3}"
+                r"(?:25[0-5]|2[0-4]\d|1?\d?\d)(?!\d)"), "<redacted:ip>"),
+]
+_SENSITIVE_KEY = re.compile(
+    r"email|phone|ssn|dob|birth|address|name|card|account|token|secret|password",
+    re.I)
+
+
+def _redact_string(s: str, extra: "Callable[[str], str] | None") -> str:
+    for pattern, repl in _PII_DETECTORS:
+        s = pattern.sub(repl, s)
+    return extra(s) if extra else s
+
+
+def _redact_value(value, extra, key_hint=None):
+    if isinstance(value, str):
+        if key_hint and _SENSITIVE_KEY.search(key_hint):
+            return "<redacted>"
+        return _redact_string(value, extra)
+    if isinstance(value, dict):
+        return {k: _redact_value(v, extra, k) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_redact_value(v, extra) for v in value]
+    return value
+
+
+def _redact_trace(transcript, tool_events, extra):
+    red_transcript = [
+        {**t, "content": _redact_string(t.get("content", ""), extra)}
+        for t in transcript
+    ]
+    red_events = []
+    for e in tool_events:
+        ev = dict(e)
+        ev["input"] = _redact_value(e.get("input", {}), extra)
+        if e.get("output") is not None:
+            ev["output"] = _redact_value(e.get("output"), extra)
+        red_events.append(ev)
+    return red_transcript, red_events
+
+
+class TraceRecorder:
+    """Detached trace recorder with report() ergonomics identical to
+    ToolSandbox, but not bound to any rollout — capture a production
+    conversation as it happens, then hand it (or .trace) to traces.ingest().
+    """
+
+    def __init__(self) -> None:
+        self._turns: list[dict] = []
+        self._events: list[dict] = []
+
+    def user(self, content: str) -> None:
+        """Append a user turn."""
+        self._turns.append({"role": "user", "content": content})
+
+    def agent(self, content: str) -> None:
+        """Append an agent turn."""
+        self._turns.append({"role": "agent", "content": content})
+
+    def report(self, name: str, output: dict, *, input: dict | None = None,
+               is_error: bool = False) -> None:
+        """Record a real tool call the agent made on the current turn."""
+        self._events.append({
+            "name": name, "input": input or {}, "output": output,
+            "is_error": is_error, "external": True,
+            "turn_idx": max(0, len(self._turns) - 1),
+        })
+
+    @property
+    def trace(self) -> dict:
+        """The captured trace: {transcript, tool_events}."""
+        return {"transcript": self._turns, "tool_events": self._events}
+
+
+class Traces:
+    def __init__(self, http: httpx.Client):
+        self._http = http
+
+    def ingest(self, trace: "TraceRecorder | dict", *, source: str,
+               error: str | None = None, count: int = 20,
+               redact: "Callable[[str], str] | None" = None) -> GenerationJob:
+        """Ingest a production issue trace and generate scenarios reproducing it.
+
+        Redacts the trace client-side (required, always on), then the server
+        distills it into synthetic scenarios. The raw trace is never
+        persisted. `trace` is a TraceRecorder or a dict
+        {transcript, tool_events}. Returns the generation job — call .wait()
+        for the dataset.
+        """
+        raw = trace.trace if isinstance(trace, TraceRecorder) else trace
+        transcript, tool_events = _redact_trace(
+            raw.get("transcript", []), raw.get("tool_events", []), redact)
+        r = self._http.post("/v1/traces", json={
+            "transcript": transcript, "tool_events": tool_events,
+            "source": source, "error": error, "count": count,
+        })
+        r.raise_for_status()
+        return _build(GenerationJob, r.json(), _http=self._http)
+
+
 class UserModels:
     def __init__(self, http: httpx.Client):
         self._http = http
@@ -890,6 +1004,7 @@ class Synthia:
         self.user_models = UserModels(self._http)
         self.datasets = Datasets(self._http)
         self.rollouts = Rollouts(self._http, session_id=self.session_id)
+        self.traces = Traces(self._http)
 
     def _start_session(self) -> None:
         """One handshake per process: get-or-create the named session and
