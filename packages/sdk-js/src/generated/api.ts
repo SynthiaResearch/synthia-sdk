@@ -115,6 +115,27 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/account/issues/{issue_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Issue
+         * @description One captured production issue: the full distilled failure (trace notes)
+         *     plus the reproduction tests it generated. The raw trace is never stored.
+         */
+        get: operations["get_issue_v1_account_issues__issue_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/account/runs/{run_id}": {
         parameters: {
             query?: never;
@@ -1099,10 +1120,53 @@ export interface components {
             /** Sha */
             sha?: string | null;
         };
+        /** IssueDetail */
+        IssueDetail: {
+            /** Id */
+            id: string;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Source */
+            source?: string | null;
+            /**
+             * Notes
+             * @default {}
+             */
+            notes: {
+                [key: string]: unknown;
+            };
+            /** Generation Id */
+            generation_id?: string | null;
+            /** Dataset Id */
+            dataset_id?: string | null;
+            /** Status */
+            status: string;
+            /** Rows */
+            rows?: number | null;
+            /**
+             * Scenarios
+             * @default []
+             */
+            scenarios: components["schemas"]["IssueScenario"][];
+        };
         /** IssueList */
         IssueList: {
             /** Issues */
             issues: components["schemas"]["IssueSummary"][];
+        };
+        /** IssueScenario */
+        IssueScenario: {
+            /** Scenario Id */
+            scenario_id: string;
+            /** Task Family */
+            task_family: string;
+            /** Title */
+            title: string;
+            /** Opening Message */
+            opening_message: string;
         };
         /** IssueSummary */
         IssueSummary: {
@@ -2074,6 +2138,37 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["IssueList"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_issue_v1_account_issues__issue_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                issue_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["IssueDetail"];
                 };
             };
             /** @description Validation Error */

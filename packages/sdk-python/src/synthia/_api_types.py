@@ -114,6 +114,13 @@ class HealthResponse(TypedDict):
     sha: NotRequired[str | None]
 
 
+class IssueScenario(TypedDict):
+    scenario_id: str
+    task_family: str
+    title: str
+    opening_message: str
+
+
 class IssueSummary(TypedDict):
     id: str
     created_at: str
@@ -430,6 +437,18 @@ class DemoTierResult(TypedDict):
 
 class HTTPValidationError(TypedDict):
     detail: NotRequired[list[ValidationError]]
+
+
+class IssueDetail(TypedDict):
+    id: str
+    created_at: str
+    source: NotRequired[str | None]
+    notes: NotRequired[dict[str, Any]]
+    generation_id: NotRequired[str | None]
+    dataset_id: NotRequired[str | None]
+    status: str
+    rows: NotRequired[int | None]
+    scenarios: NotRequired[list[IssueScenario]]
 
 
 class IssueList(TypedDict):
