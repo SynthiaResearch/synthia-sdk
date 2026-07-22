@@ -23,11 +23,48 @@ class ContextReport(TypedDict):
     assessment: list[dict[str, Any]]
 
 
+class CustomScenarioInput(TypedDict):
+    user_goal: str
+    title: NotRequired[str | None]
+    opening_message: NotRequired[str | None]
+    hidden_information: NotRequired[list[str] | None]
+    environment_setup: NotRequired[list[str] | None]
+    failing_tool: NotRequired[str | None]
+    tool_expectations: NotRequired[list[str] | None]
+    success_criteria: NotRequired[list[str] | None]
+    challenge: NotRequired[str | None]
+    task_family: NotRequired[str | None]
+    controls: NotRequired[dict[str, Any]]
+
+
+class CustomScenarioResult(TypedDict):
+    scenario_id: str
+    task_family: str
+    controls: dict[str, Any]
+    passed: bool
+    is_duplicate: bool
+    judge: NotRequired[dict[str, Any] | None]
+
+
+class CustomScenariosCreate(TypedDict):
+    scenarios: list[CustomScenarioInput]
+
+
+class CustomScenariosResult(TypedDict):
+    data: list[CustomScenarioResult]
+
+
 class Dataset(TypedDict):
     id: str
     generation_id: str
     user_model_id: str
     row_count: int
+
+
+class DatasetComposeCreate(TypedDict):
+    user_model_id: str
+    scenario_ids: list[str]
+    label: NotRequired[str | None]
 
 
 class DatasetList(TypedDict):
@@ -97,6 +134,7 @@ class GenerationCreate(TypedDict):
     user_model_id: str
     count: NotRequired[int]
     quality_check_id: NotRequired[str | None]
+    guidance: NotRequired[str | None]
 
 
 class GenerationJob(TypedDict):
@@ -326,9 +364,7 @@ class Seed(TypedDict):
 
 
 class SeedCreate(TypedDict):
-    kind: Literal[
-        'document', 'tool_schema', 'policy', 'seed_conversation', 'trace', 'db_record'
-    ]
+    kind: Literal['document', 'tool_schema', 'policy', 'seed_conversation', 'trace']
     source: str
     content: NotRequired[dict[str, Any]]
     version: NotRequired[str]

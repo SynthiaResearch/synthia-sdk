@@ -188,14 +188,31 @@ returns the mixed conversation WAV.
   the agent until the server converges on a user model. The agent runs
   locally; only probe questions, replies, and traced tool calls travel.
 - **`get(id)`**, **`list(session?)`**.
+- **`submitScenarios(userModelOrId, scenarios)`** → `CustomScenarioResult[]` —
+  submit your own scenarios against a user model. Only `user_goal` is required
+  per scenario; every other field (opening message, hidden information, success
+  criteria, task family, controls, …) is completed and grounded in the model's
+  representation server-side. The returned `passed`/`judge` are **advisory** —
+  a failing verdict never blocks; the scenario is stored either way. Feed the
+  returned `scenario_id`s to `datasets.compose`.
 
 `UserModel`: `{ id, probe_session_id, persona, traits, representation_id }`.
 
 ### `synthia.datasets`
 
-- **`generate(userModelOrId, { count?, qualityCheckId? })`** → `GenerationJob`
-  — start scenario generation; `qualityCheckId` names a completed check
-  whose real results calibrate the batch.
+- **`generate(userModelOrId, { count?, qualityCheckId?, guidance? })`** →
+  `GenerationJob` — start scenario generation; `qualityCheckId` names a
+  completed check whose real results calibrate the batch. `guidance` is a
+  free-text steer that biases scenario content toward a theme, situation, or
+  emphasis. It biases content *within* the sampled task families and controls;
+  it does not hard-filter families, and it never overrides grounding in your
+  model's representation (it is not a source of new tools, policies, or facts).
+- **`compose(userModelOrId, scenarioIds, { label? })`** → `Dataset` — assemble
+  a dataset from an explicit set of scenarios (custom, generated, or a mix)
+  that all belong to the user model's representation. This is how you **reuse
+  or curate**: pass existing `scenario_id`s (a subset of another dataset's
+  rows, and/or ids from `submitScenarios`) and get a dataset that shares those
+  rows by reference.
 - **`get(id)`**, **`list(session?)`** (newest first).
 
 ### `synthia.rollouts`

@@ -84,10 +84,24 @@ handshake-mirrored attributes are readable immediately after construction.
   marks the seed voice-origin; images, PDFs, and Office documents are
   rendered to text natively.
 - **`client.user_models`** — `create_from_probe(agent, max_turns=10,
-  verbose=False)`, `get(model_id)`, `list(session=None)`.
+  verbose=False)`, `get(model_id)`, `list(session=None)`,
+  `submit_scenarios(user_model, scenarios)` → `list[dict]`. `submit_scenarios`
+  takes your own scenarios (each a dict; only `user_goal` is required) and
+  completes + grounds them in the model's representation server-side. Each
+  result's `passed`/`judge` are **advisory** — a failing verdict never blocks;
+  the scenario is stored either way. Feed the returned `scenario_id`s to
+  `datasets.compose`.
 - **`client.datasets`** — `generate(user_model, count=20, *,
-  quality_check_id=None)` → `GenerationJob`, `get(dataset_id)`,
-  `list(session=None)`.
+  quality_check_id=None, guidance=None)` → `GenerationJob`,
+  `compose(user_model, scenario_ids, *, label=None)` → `Dataset`,
+  `get(dataset_id)`, `list(session=None)`. `guidance` is a free-text steer that
+  biases scenario content toward a theme or situation; it biases content within
+  the sampled families/controls, never hard-filters families, and never
+  overrides grounding (not a source of new tools, policies, or facts).
+  `compose` assembles a dataset from an explicit set of scenarios (custom,
+  generated, or a mix) belonging to the user model's representation — the
+  **reuse/curation** path: pass existing `scenario_id`s and get a dataset that
+  shares those rows by reference.
 - **`client.rollouts`** —
   `run(agent, dataset=None, *, max_turns=12, concurrency=4, agent_meta=None)`
   → `list[RolloutResult]`;

@@ -393,6 +393,30 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/user-models/{model_id}/scenarios": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Submit Custom Scenarios
+         * @description Submit user-authored scenarios against a user model. Each partial spec is
+         *     completed and grounded in the model's representation (normalize_custom_spec),
+         *     stored with origin 'custom', and deduped. The judge runs but is ADVISORY —
+         *     a failing verdict never blocks; the scenario is stored either way. Compose
+         *     the results into a dataset with POST /v1/datasets.
+         */
+        post: operations["submit_custom_scenarios_v1_user_models__model_id__scenarios_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/generations": {
         parameters: {
             query?: never;
@@ -471,7 +495,15 @@ export interface paths {
         /** List Datasets */
         get: operations["list_datasets_v1_datasets_get"];
         put?: never;
-        post?: never;
+        /**
+         * Compose Dataset
+         * @description Assemble a dataset from an explicit set of scenarios (custom, generated,
+         *     or a mix). Every scenario must belong to user_model_id's representation.
+         *     Reuse/curation is this endpoint called with existing scenario ids. A
+         *     synthetic 'compose'-origin generation row is minted so all the usual
+         *     dataset joins keep working; no scenarios are sampled.
+         */
+        post: operations["compose_dataset_v1_datasets_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -893,6 +925,65 @@ export interface components {
                 [key: string]: unknown;
             }[];
         };
+        /** CustomScenarioInput */
+        CustomScenarioInput: {
+            /** User Goal */
+            user_goal: string;
+            /** Title */
+            title?: string | null;
+            /** Opening Message */
+            opening_message?: string | null;
+            /** Hidden Information */
+            hidden_information?: string[] | null;
+            /** Environment Setup */
+            environment_setup?: string[] | null;
+            /** Failing Tool */
+            failing_tool?: string | null;
+            /** Tool Expectations */
+            tool_expectations?: string[] | null;
+            /** Success Criteria */
+            success_criteria?: string[] | null;
+            /** Challenge */
+            challenge?: string | null;
+            /** Task Family */
+            task_family?: string | null;
+            /**
+             * Controls
+             * @default {}
+             */
+            controls: {
+                [key: string]: unknown;
+            };
+        };
+        /** CustomScenarioResult */
+        CustomScenarioResult: {
+            /** Scenario Id */
+            scenario_id: string;
+            /** Task Family */
+            task_family: string;
+            /** Controls */
+            controls: {
+                [key: string]: unknown;
+            };
+            /** Passed */
+            passed: boolean;
+            /** Is Duplicate */
+            is_duplicate: boolean;
+            /** Judge */
+            judge?: {
+                [key: string]: unknown;
+            } | null;
+        };
+        /** CustomScenariosCreate */
+        CustomScenariosCreate: {
+            /** Scenarios */
+            scenarios: components["schemas"]["CustomScenarioInput"][];
+        };
+        /** CustomScenariosResult */
+        CustomScenariosResult: {
+            /** Data */
+            data: components["schemas"]["CustomScenarioResult"][];
+        };
         /** Dataset */
         Dataset: {
             /** Id */
@@ -903,6 +994,15 @@ export interface components {
             user_model_id: string;
             /** Row Count */
             row_count: number;
+        };
+        /** DatasetComposeCreate */
+        DatasetComposeCreate: {
+            /** User Model Id */
+            user_model_id: string;
+            /** Scenario Ids */
+            scenario_ids: string[];
+            /** Label */
+            label?: string | null;
         };
         /** DatasetList */
         DatasetList: {
@@ -1088,6 +1188,8 @@ export interface components {
             count: number;
             /** Quality Check Id */
             quality_check_id?: string | null;
+            /** Guidance */
+            guidance?: string | null;
         };
         /** GenerationJob */
         GenerationJob: {
@@ -1731,7 +1833,7 @@ export interface components {
              * Kind
              * @enum {string}
              */
-            kind: "document" | "tool_schema" | "policy" | "seed_conversation" | "trace" | "db_record";
+            kind: "document" | "tool_schema" | "policy" | "seed_conversation" | "trace";
             /** Source */
             source: string;
             /**
@@ -2616,6 +2718,41 @@ export interface operations {
             };
         };
     };
+    submit_custom_scenarios_v1_user_models__model_id__scenarios_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                model_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CustomScenariosCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CustomScenariosResult"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     create_generation_v1_generations_post: {
         parameters: {
             query?: never;
@@ -2760,6 +2897,39 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["DatasetList"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    compose_dataset_v1_datasets_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DatasetComposeCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Dataset"];
                 };
             };
             /** @description Validation Error */

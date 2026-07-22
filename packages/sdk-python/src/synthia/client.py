@@ -627,6 +627,20 @@ class UserModels:
         r.raise_for_status()
         return [_build(UserModel, m) for m in r.json()["data"]]
 
+    def submit_scenarios(self, user_model: UserModel | str,
+                         scenarios: list[dict]) -> list[dict]:
+        """Submit user-authored scenarios against a user model. Each partial
+        spec (only `user_goal` is required) is completed and grounded in the
+        model's representation server-side, then stored. Each returned result's
+        `passed`/`judge` are ADVISORY — a failing verdict never blocks; the
+        scenario is stored either way. Compose the results into a dataset with
+        `datasets.compose`."""
+        model_id = user_model.id if isinstance(user_model, UserModel) else user_model
+        r = self._http.post(f"/v1/user-models/{model_id}/scenarios",
+                            json={"scenarios": scenarios})
+        r.raise_for_status()
+        return r.json()["data"]
+
 
 class Datasets:
     def __init__(self, http: httpx.Client):
@@ -645,16 +659,35 @@ class Datasets:
         return [_build(Dataset, d, _http=self._http) for d in r.json()["data"]]
 
     def generate(self, user_model: UserModel | str, count: int = 20, *,
-                 quality_check_id: str | None = None) -> GenerationJob:
+                 quality_check_id: str | None = None,
+                 guidance: str | None = None) -> GenerationJob:
         """Start a generation job. quality_check_id names a completed quality
-        check whose results calibrate the batch's difficulty and coverage."""
+        check whose results calibrate the batch's difficulty and coverage.
+        guidance is an optional free-text steer that biases scenario content
+        toward a theme or situation; it never overrides grounding."""
         model_id = user_model.id if isinstance(user_model, UserModel) else user_model
         body = {"user_model_id": model_id, "count": count}
         if quality_check_id:
             body["quality_check_id"] = quality_check_id
+        if guidance:
+            body["guidance"] = guidance
         r = self._http.post("/v1/generations", json=body)
         r.raise_for_status()
         return _build(GenerationJob, r.json(), _http=self._http)
+
+    def compose(self, user_model: UserModel | str, scenario_ids: list[str], *,
+                label: str | None = None) -> Dataset:
+        """Assemble a dataset from an explicit set of scenarios (custom,
+        generated, or a mix) that all belong to `user_model`'s representation.
+        This is how you reuse or curate existing scenarios: pass their ids and
+        get back a new dataset that shares those scenario rows by reference."""
+        model_id = user_model.id if isinstance(user_model, UserModel) else user_model
+        body: dict = {"user_model_id": model_id, "scenario_ids": scenario_ids}
+        if label:
+            body["label"] = label
+        r = self._http.post("/v1/datasets", json=body)
+        r.raise_for_status()
+        return _build(Dataset, r.json(), _http=self._http)
 
 
 @dataclass

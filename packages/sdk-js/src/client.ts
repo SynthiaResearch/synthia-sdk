@@ -11,6 +11,8 @@ type Api<K extends keyof components["schemas"]> = components["schemas"][K];
 // name is taken by a hand-written interface (the local sandbox surface) get
 // an `Api` prefix.
 export type Seed = Api<"Seed">;
+export type CustomScenarioInput = Api<"CustomScenarioInput">;
+export type CustomScenarioResult = Api<"CustomScenarioResult">;
 export type DatasetRow = Api<"DatasetRow">;
 export type ScenarioValidation = Api<"ScenarioValidation">;
 export type RolloutEvaluation = Api<"RolloutEvaluation">;
@@ -729,6 +731,25 @@ export class UserModels {
       representation_id: m.representation_id ?? null,
     }));
   }
+
+  /**
+   * Submit user-authored scenarios against a user model. Each partial spec
+   * (only `user_goal` is required) is completed and grounded in the model's
+   * representation server-side, then stored. The returned `passed`/`judge`
+   * are ADVISORY — a failing verdict never blocks; the scenario is stored
+   * either way. Compose the results into a dataset with `datasets.compose`.
+   */
+  async submitScenarios(
+    userModel: UserModel | string,
+    scenarios: CustomScenarioInput[],
+  ): Promise<CustomScenarioResult[]> {
+    const modelId = typeof userModel === "string" ? userModel : userModel.id;
+    const body = await this.#http.post<Api<"CustomScenariosResult">>(
+      `/v1/user-models/${modelId}/scenarios`,
+      { scenarios },
+    );
+    return body.data;
+  }
 }
 
 export class Datasets {
@@ -758,23 +779,48 @@ export class Datasets {
   /**
    * Start a generation job. qualityCheckId names a completed quality
    * check whose results calibrate the batch's difficulty and coverage.
+   * guidance is an optional free-text steer that biases scenario content
+   * toward a theme or situation; it never overrides grounding.
    */
   async generate(
     userModel: UserModel | string,
-    opts: { count?: number; qualityCheckId?: string } = {},
+    opts: { count?: number; qualityCheckId?: string; guidance?: string } = {},
   ): Promise<GenerationJob> {
-    const { count = 20, qualityCheckId } = opts;
+    const { count = 20, qualityCheckId, guidance } = opts;
     const modelId = typeof userModel === "string" ? userModel : userModel.id;
     const body: Record<string, unknown> = {
       user_model_id: modelId,
       count,
     };
     if (qualityCheckId) body["quality_check_id"] = qualityCheckId;
+    if (guidance) body["guidance"] = guidance;
     const data = await this.#http.post<Api<"GenerationJob">>(
       "/v1/generations",
       body,
     );
     return new GenerationJob(data, this.#http);
+  }
+
+  /**
+   * Assemble a dataset from an explicit set of scenarios (custom, generated,
+   * or a mix) that all belong to `userModel`'s representation. This is how you
+   * reuse or curate existing scenarios: pass their ids (e.g. a subset of
+   * `dataset.rows()`, or scenarios from `userModels.submitScenarios`) and get
+   * back a new dataset that shares those scenario rows by reference.
+   */
+  async compose(
+    userModel: UserModel | string,
+    scenarioIds: string[],
+    opts: { label?: string } = {},
+  ): Promise<Dataset> {
+    const modelId = typeof userModel === "string" ? userModel : userModel.id;
+    const body: Record<string, unknown> = {
+      user_model_id: modelId,
+      scenario_ids: scenarioIds,
+    };
+    if (opts.label) body["label"] = opts.label;
+    const data = await this.#http.post<Api<"Dataset">>("/v1/datasets", body);
+    return new Dataset(data, this.#http);
   }
 }
 
